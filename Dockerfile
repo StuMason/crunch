@@ -14,7 +14,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # PHP extensions: ffi (ONNX Runtime), pdo_sqlite (data), pcntl (Octane), opcache.
-RUN docker-php-ext-install -j"$(nproc)" ffi pdo_sqlite pcntl opcache \
+RUN docker-php-ext-install -j"$(nproc)" ffi pdo_sqlite pcntl opcache bcmath \
     && { \
         echo "ffi.enable=1"; \
         echo "memory_limit=1024M"; \
