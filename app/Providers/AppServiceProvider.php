@@ -2,19 +2,20 @@
 
 namespace App\Providers;
 
+use App\Inference\InferenceManager;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\ServiceProvider;
-use Laravel\Telescope\TelescopeServiceProvider as BaseTelescopeServiceProvider;
 use Illuminate\Validation\Rules\Password;
+use Laravel\Telescope\TelescopeServiceProvider as BaseTelescopeServiceProvider;
 
 class AppServiceProvider extends ServiceProvider
 {
     /**
      * Register any application services.
      */
-        public function register(): void
+    public function register(): void
     {
         // Register Telescope only when Redis extension is available
         // This prevents build failures during package:discover
@@ -22,6 +23,10 @@ class AppServiceProvider extends ServiceProvider
             $this->app->register(BaseTelescopeServiceProvider::class);
             $this->app->register(TelescopeServiceProvider::class);
         }
+
+        // Warm inference engines: a singleton so models stay loaded across
+        // requests under Octane (holds no request state — safe to persist).
+        $this->app->singleton(InferenceManager::class);
     }
 
     /**
