@@ -14,8 +14,11 @@
         "laravel/chisel": "^0.1.0",
         "laravel/fortify": "^1.37.2",
         "laravel/framework": "^13.7",
+        "laravel/sanctum": "^4.0",
+        "laravel/telescope": "^5.20",
         "laravel/tinker": "^3.0",
-        "laravel/wayfinder": "^0.1.14"
+        "laravel/wayfinder": "^0.1.14",
+        "sqids/sqids": "^0.5.0"
     },
     "require-dev": {
         "fakerphp/faker": "^1.24",
@@ -29,7 +32,8 @@
         "nunomaduro/collision": "^8.9.3",
         "pestphp/pest": "^4.7",
         "pestphp/pest-plugin-drift": "^4.1",
-        "pestphp/pest-plugin-laravel": "^4.1"
+        "pestphp/pest-plugin-laravel": "^4.1",
+        "stumason/claudavel": "^1.6"
     },
     "autoload": {
         "psr-4": {

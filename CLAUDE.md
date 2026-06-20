@@ -1,3 +1,252 @@
+## Coding Standards (Read First!)
+
+**Before writing any code**, read the coding standards in `docs/standards/`:
+
+- [README.md](docs/standards/README.md) - Quick reference and checklist
+- [general.md](docs/standards/general.md) - Core principles, type hints, imports
+- [backend.md](docs/standards/backend.md) - Laravel patterns: models, migrations, controllers, Actions, DTOs
+- [frontend.md](docs/standards/frontend.md) - Inertia + React + Tailwind patterns
+- [testing.md](docs/standards/testing.md) - Pest v4 testing patterns
+
+These standards take precedence over generic Laravel conventions. When writing similar code to what exists elsewhere, check how it was done and follow the same pattern.
+
+---
+
+## Git Workflow
+
+### Branch Strategy
+
+- Work on feature branches: `feature/short-description`
+- Make atomic commits for logical units of work
+- Keep commits focused and well-described
+
+### Slice-Based Development
+
+Break features into vertical slices. Each slice should be a complete, testable unit:
+
+1. Migration + Model + Factory
+2. Controller + Routes
+3. Frontend page/component
+4. Tests
+
+Complete one slice before moving to the next. This ensures incremental, testable progress.
+
+### Example Workflow
+
+```bash
+git checkout -b feature/user-profiles
+# Work on slice 1: database layer
+# Commit: "Add users profile fields migration and model updates"
+# Work on slice 2: API layer
+# Commit: "Add profile controller and routes"
+# Work on slice 3: frontend
+# Commit: "Add profile page with edit form"
+# Work on slice 4: tests
+# Commit: "Add profile feature tests"
+git push -u origin feature/user-profiles
+# Create PR when feature is complete
+```
+
+---
+
+## GitHub Interactions
+
+Always use `gh` CLI for GitHub interactions instead of web fetching:
+
+```bash
+# Issues
+gh issue list
+gh issue view 123
+gh issue create --title "Title" --body "Body"
+
+# Pull Requests
+gh pr list
+gh pr view 123
+gh pr view 123 --comments --json comments
+gh pr diff 123
+gh pr create --title "Title" --body "Body"
+
+# Comments
+gh pr comment 123 --body "Comment text"
+```
+
+The `gh` CLI is more reliable than web fetching and has proper access to private repositories.
+
+---
+
+## Generator Commands
+
+Use these commands instead of writing boilerplate manually:
+
+```bash
+# Create an Action class (business logic)
+php artisan make:action User/UpdateProfile
+php artisan make:action Order/ApproveOrder
+
+# Create a DTO (data transfer object)
+php artisan make:dto UserProfile --properties=id:int,name:string,email:string
+php artisan make:dto OrderData --properties=id:int,total:int,status:string --model=Order
+
+# Generate TypeScript interfaces from DTOs
+php artisan types:generate
+```
+
+### When to use these commands
+
+- **make:action**: Always use for business logic. Creates properly structured Action in `app/Actions/{Domain}/`
+- **make:dto**: Use when passing data to Inertia pages. Creates readonly DTO with optional `fromModel()` method
+- **types:generate**: Run after creating/modifying DTOs. Generates `resources/js/types/generated.d.ts`
+
+### TypeScript Integration
+
+After running `types:generate`, import types in your React components:
+
+```tsx
+import type { UserData, OrderData } from '@/types/generated';
+```
+
+---
+
+## Async Job Pattern
+
+For queued/async work, use the Controller → Job → Action pattern:
+
+```
+Controller → Job → Action
+```
+
+- **Controller**: Dispatches the job (keeps HTTP request fast)
+- **Job**: Implements `ShouldQueue`, calls the action, handles failures
+- **Action**: Contains the reusable business logic
+
+### Example
+
+```php
+// Controller - dispatch and return immediately
+public function store(Request $request): RedirectResponse
+{
+    SyncRepositoryJob::dispatch($request->owner, $request->repo, $request->user()->id);
+    return back()->with('success', 'Sync started');
+}
+
+// Job - queued wrapper with failure handling
+class SyncRepositoryJob implements ShouldQueue
+{
+    public function __construct(
+        public string $owner,
+        public string $repo,
+        public int $userId,
+    ) {}
+
+    public function handle(SyncRepository $action): void
+    {
+        $result = $action->handle($this->owner, $this->repo);
+        SyncCompleted::dispatch($result, $this->userId);
+    }
+
+    public function failed(Throwable $e): void
+    {
+        SyncFailed::dispatch($this->owner, $this->repo, $e->getMessage(), $this->userId);
+    }
+}
+
+// Action - reusable business logic (can be called sync or async)
+class SyncRepository
+{
+    public function handle(string $owner, string $repo): Repository
+    {
+        // Business logic here
+    }
+}
+```
+
+This keeps Actions reusable (can be called synchronously in tests or other contexts) while providing proper async handling.
+
+---
+
+## Real-Time Updates with Reverb
+
+For real-time frontend updates from async jobs, use Laravel Reverb with Echo React.
+
+### Backend: Broadcasting Events
+
+```php
+// Event for success
+class SyncCompleted implements ShouldBroadcast
+{
+    public function __construct(
+        public Repository $repository,
+        public int $userId,
+    ) {}
+
+    public function broadcastOn(): array
+    {
+        return [new PrivateChannel("App.Models.User.{$this->userId}")];
+    }
+}
+
+// Event for failure
+class SyncFailed implements ShouldBroadcast
+{
+    public function __construct(
+        public string $identifier,
+        public string $message,
+        public int $userId,
+    ) {}
+
+    public function broadcastOn(): array
+    {
+        return [new PrivateChannel("App.Models.User.{$this->userId}")];
+    }
+}
+```
+
+### Frontend: Listening with useEcho
+
+```tsx
+import { useEcho } from '@laravel/echo-react';
+import { toast } from 'sonner';
+
+export default function Dashboard({ auth }: { auth: { user: User } }) {
+    useEcho(`App.Models.User.${auth.user.id}`, 'SyncCompleted', (e) => {
+        toast.success('Repository synced!', {
+            description: e.repository.name,
+        });
+    });
+
+    useEcho(`App.Models.User.${auth.user.id}`, 'SyncFailed', (e) => {
+        toast.error('Sync failed', {
+            description: e.message,
+        });
+    });
+
+    return <div>...</div>;
+}
+```
+
+### Channel Authorization
+
+In `routes/channels.php`:
+
+```php
+Broadcast::channel('App.Models.User.{id}', function ($user, $id) {
+    return (int) $user->id === (int) $id;
+});
+```
+
+---
+
+## Running Tests
+
+Use this command to run tests (avoids environment variable conflicts):
+
+```bash
+env -u APP_ENV -u DB_CONNECTION -u DB_DATABASE -u DB_HOST -u DB_PORT -u DB_USERNAME -u DB_PASSWORD -u SESSION_DRIVER -u CACHE_STORE -u QUEUE_CONNECTION php artisan test
+```
+
+
+---
+
 <laravel-boost-guidelines>
 === foundation rules ===
 
@@ -14,6 +263,8 @@ This application is a Laravel application and its main Laravel ecosystems packag
 - laravel/fortify (FORTIFY) - v1
 - laravel/framework (LARAVEL) - v13
 - laravel/prompts (PROMPTS) - v0
+- laravel/sanctum (SANCTUM) - v4
+- laravel/telescope (TELESCOPE) - v5
 - laravel/wayfinder (WAYFINDER) - v0
 - larastan/larastan (LARASTAN) - v3
 - laravel/boost (BOOST) - v2
