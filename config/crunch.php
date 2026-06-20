@@ -23,6 +23,16 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Pre-warm
+    |--------------------------------------------------------------------------
+    | Capabilities to load into memory when an Octane worker boots, so the first
+    | request is already warm. Each worker holds its own copy — keep this to hot,
+    | lightweight capabilities; heavy ones (Whisper) lazy-load on first use.
+    */
+    'warm' => array_filter(explode(',', (string) env('CRUNCH_WARM', 'embed'))),
+
+    /*
+    |--------------------------------------------------------------------------
     | Capability → model map (the LOCKED v2 set, verified on arm64 2026-06-20)
     |--------------------------------------------------------------------------
     | Every model is a one-line swap. `quantized:false` + an explicit
@@ -37,7 +47,7 @@ return [
             'model' => 'onnx-community/Qwen3-Embedding-0.6B-ONNX',
             'quantized' => false,
             'model_filename' => 'model_quantized',
-            'pooling' => 'mean',
+            'pooling' => 'last_token', // Qwen3-Embedding is a causal embedder → last-token, not mean
             'normalize' => true,
             'dimensions' => 1024,
         ],

@@ -1,5 +1,7 @@
 <?php
 
+use App\Inference\InferenceManager;
+use App\Listeners\PrewarmModels;
 use Laravel\Octane\Contracts\OperationTerminated;
 use Laravel\Octane\Events\RequestHandled;
 use Laravel\Octane\Events\RequestReceived;
@@ -68,6 +70,7 @@ return [
         WorkerStarting::class => [
             EnsureUploadedFilesAreValid::class,
             EnsureUploadedFilesCanBeMoved::class,
+            PrewarmModels::class,
         ],
 
         RequestReceived::class => [
@@ -132,6 +135,10 @@ return [
 
     'warm' => [
         ...Octane::defaultServicesToWarm(),
+        // Resolve the inference manager on the base app at worker boot so loaded
+        // models persist across requests (without this, the per-request sandbox
+        // discards it and every request reloads the model).
+        InferenceManager::class,
     ],
 
     'flush' => [

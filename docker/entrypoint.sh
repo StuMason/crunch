@@ -17,5 +17,10 @@ fi
 php artisan migrate --force --no-interaction || true
 php artisan config:clear
 
-# Long-running Octane server (FrankenPHP). Models load lazily and stay warm per worker.
-exec php artisan octane:start --server=frankenphp --host=0.0.0.0 --port=8000
+# Long-running Octane server (FrankenPHP). Each worker holds its own warm copy of
+# the models, so the worker count is bounded (FrankenPHP otherwise defaults to one
+# per CPU — 16 here — which would multiply model RAM). Tune via OCTANE_WORKERS.
+exec php artisan octane:start --server=frankenphp \
+    --host=0.0.0.0 --port=8000 \
+    --workers="${OCTANE_WORKERS:-2}" \
+    --max-requests="${OCTANE_MAX_REQUESTS:-500}"

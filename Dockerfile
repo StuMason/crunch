@@ -1,20 +1,16 @@
 # syntax=docker/dockerfile:1
 # crunch — FrankenPHP/Octane + transformers-php (ONNX via FFI). Multi-arch (arm64 target).
+# Single stage: the Wayfinder Vite plugin shells out to `php artisan` during the asset
+# build, so PHP + Node must coexist at build time. node_modules is pruned afterwards.
 
-# --- Stage 1: build React/Inertia assets ---
-FROM node:24-bookworm-slim AS assets
-WORKDIR /app
-COPY package.json package-lock.json ./
-RUN npm ci
-COPY . .
-RUN npm run build
-
-# --- Stage 2: app runtime (FrankenPHP + Octane) ---
 FROM dunglas/frankenphp:1-php8.4-bookworm AS app
 
 # System deps — spike-proven: libffi for ONNX-via-FFI, libsndfile1 + ffmpeg for audio (Whisper).
+# Node 24 (NodeSource) builds the React/Inertia + Wayfinder assets.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      git unzip libffi-dev libsndfile1 ffmpeg \
+      git unzip curl ca-certificates gnupg libffi-dev libsqlite3-dev libsndfile1 ffmpeg \
+    && curl -fsSL https://deb.nodesource.com/setup_24.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/*
 
 # PHP extensions: ffi (ONNX Runtime), pdo_sqlite (data), pcntl (Octane), opcache.
@@ -30,14 +26,13 @@ COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
 
 WORKDIR /app
 
-# App source first (artisan scripts need the skeleton), then PHP deps.
-# composer install also pulls the arm64 ONNX Runtime via the transformers plugin.
 COPY . .
+# composer install also pulls the arm64 ONNX Runtime via the transformers plugin.
 RUN cp .env.example .env \
-    && composer install --no-dev --no-interaction --no-progress --prefer-dist --optimize-autoloader
-
-# Built frontend assets from stage 1.
-COPY --from=assets /app/public/build ./public/build
+    && composer install --no-dev --no-interaction --no-progress --prefer-dist --optimize-autoloader \
+    && npm ci \
+    && npm run build \
+    && rm -rf node_modules
 
 # Runtime dirs (model cache + sqlite live on persistent volumes in prod).
 RUN mkdir -p /data/models database \
