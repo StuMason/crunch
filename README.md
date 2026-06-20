@@ -1,122 +1,139 @@
-# crunch
+<div align="center">
 
-**Self-hosted, OpenAI-compatible inference API.** One bite encoder models — embeddings,
-reranking, classification, vision and speech. Fast, warm, and yours.
+# 🔪 CRUNCH
 
-🔗 **Live:** [crunch.stumason.dev](https://crunch.stumason.dev) · **Interactive API docs:** [/docs/api](https://crunch.stumason.dev/docs/api)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![PHP 8.4](https://img.shields.io/badge/PHP-8.4-777BB4.svg)](https://php.net)
+[![Laravel 13](https://img.shields.io/badge/Laravel-13-FF2D20.svg)](https://laravel.com)
+[![Octane · FrankenPHP](https://img.shields.io/badge/Octane-FrankenPHP-000000.svg)](https://laravel.com/docs/octane)
+[![CI](https://github.com/StuMason/crunch/actions/workflows/tests.yml/badge.svg)](https://github.com/StuMason/crunch/actions/workflows/tests.yml)
 
-crunch runs *discriminative* ("one-shot") models — input → vector / score / label — as a
-single [Laravel](https://laravel.com) app on [Octane](https://laravel.com/docs/octane)
-(FrankenPHP), with models kept **warm in memory** so synchronous calls are fast. Inference is
-in-process via [transformers-php](https://github.com/CodeWithKyrian/transformers-php) (ONNX
-Runtime). No Python, no GPU, no per-call cost.
+**One bite encoder models. Fast, warm and delicious.**
+
+> A self-hosted, OpenAI-compatible inference API for everything that *isn't* a chatbot —
+> **embeddings, reranking, classification, moderation, image labelling, captioning and speech-to-text** —
+> in a single Laravel container, on your own compute, at near-zero marginal cost.
+
+🌐 **Live:** [crunch.stumason.dev](https://crunch.stumason.dev) · 📖 **Interactive docs:** [/docs/api](https://crunch.stumason.dev/docs/api)
+
+</div>
 
 ---
 
-## Authentication
+## What is this?
 
-Send a bearer token on every request:
+The big AI APIs are built for *generating* — chat, completions, images. But most real apps need
+the boring, brilliant **"one-shot" models** underneath: turn text into vectors, rank search
+results, score sentiment, flag bad content, label an image, transcribe audio.
 
-```
-Authorization: Bearer <token>
-```
+**crunch** is all of those behind **one API key, one base URL, one container** — running on
+hardware you already own. No Python, no GPU, no per-call meter, no data leaving your box. Models
+stay **warm in memory** ([Laravel Octane](https://laravel.com/docs/octane) + FrankenPHP), so
+calls come back in tens of milliseconds.
 
-- **Create tokens** in the dashboard (`/dashboard`) — shown once, copy immediately.
-- Each token has a **rate limit** (requests/minute) and an optional **monthly quota**.
-- OpenAI SDKs work directly with `base_url = https://crunch.stumason.dev`.
+It's the lean alternative to stitching together OpenAI + Cohere + Deepgram + a moderation
+vendor — and to babysitting a pile of separate model servers.
+
+## Capabilities
+
+| Endpoint | What it does | Model |
+| --- | --- | --- |
+| `POST /v1/embeddings` · `/embed` | Text → vector (semantic search, RAG, similarity) | Qwen3-Embedding-0.6B (1024-d) |
+| `POST /rerank` | Re-order candidates by true relevance to a query | ms-marco-MiniLM |
+| `POST /sentiment` | Emotion / sentiment across 28 categories | go_emotions |
+| `POST /moderate` | Flag harmful content (multi-category) | KoalaAI Text-Moderation |
+| `POST /classify-image` | Score an image against your own labels (zero-shot) | CLIP |
+| `POST /caption` | Describe an image in words | vit-gpt2 |
+| `POST /transcribe` → `GET /jobs/{id}` | Speech → text (async) | distil-whisper |
+
+Every model is a **one-line swap** in `config/crunch.php`.
+
+## Why crunch
+
+- **🔌 OpenAI-compatible** — point any OpenAI SDK at the base URL and embeddings just work.
+- **⚡ Warm & fast** — Octane keeps models loaded; no cold reload per request.
+- **📦 One container** — SQLite + database queue. No Postgres, no Redis, no Python, no GPU.
+- **🔐 Yours** — self-hosted; your data never leaves your infrastructure.
+- **🎛️ Batteries included** — API tokens, per-token rate limits + monthly quotas, usage
+  dashboard, and auto-generated interactive docs, all built in.
+
+## Quickstart
 
 ```bash
+# 1. Create a token in the dashboard (/dashboard), then:
 KEY="crunch_..."
+
+# Embeddings
 curl -sX POST https://crunch.stumason.dev/embed \
   -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' \
   -d '{"inputs":["hello world","goodbye world"]}'
-```
 
-## Endpoints
-
-| Method & path | Body | Returns | Model |
-|---|---|---|---|
-| `POST /v1/embeddings` | `{"input": str \| [str]}` | OpenAI shape `{"data":[{"embedding":[…]}]}` | Qwen3-Embedding-0.6B (1024-d, unit-normalized) |
-| `POST /embed` | `{"inputs": str \| [str]}` | `[[float, …]]` | Qwen3-Embedding-0.6B |
-| `POST /rerank` | `{"query": str, "texts": [str], "top_k"?: int}` | `{"results":[{index, score, text}]}` (desc) | ms-marco-MiniLM-L-6-v2 |
-| `POST /sentiment` | `{"inputs": str}` | `{"results":[{label, score}]}` (28 emotions) | go_emotions |
-| `POST /moderate` | `{"inputs": str}` | `{"results":[{label, score}]}` (multi-category) | KoalaAI/Text-Moderation |
-| `POST /classify-image` | image¹ + `{"labels": [str]}` | `{"results":[{label, score}]}` | CLIP (zero-shot) |
-| `POST /caption` | image¹ | `{"caption": str}` | vit-gpt2 |
-| `POST /transcribe` | audio¹ | `202` + job to poll | distil-whisper small.en |
-| `GET /jobs/{id}` | — | job `{status, result, …}` | — |
-| `GET /up` | — | health `200` | — |
-
-¹ **Media inputs** (`/classify-image`, `/caption`, `/transcribe`) accept any one of:
-a public `url`, a base64 string (`image` / `audio`), or a multipart file upload.
-
-### Examples
-
-```bash
-# rerank
-curl -sX POST https://crunch.stumason.dev/rerank -H "Authorization: Bearer $KEY" \
+# Rerank
+curl -sX POST https://crunch.stumason.dev/rerank \
+  -H "Authorization: Bearer $KEY" \
   -d '{"query":"healing peptide","texts":["BPC-157 repairs tissue","how to bake bread"]}'
-
-# image caption (by url)
-curl -sX POST https://crunch.stumason.dev/caption -H "Authorization: Bearer $KEY" \
-  -d '{"url":"https://example.com/cat.jpg"}'
-
-# transcribe (async): returns a job, then poll
-JOB=$(curl -sX POST https://crunch.stumason.dev/transcribe -H "Authorization: Bearer $KEY" \
-  -F audio=@clip.wav | jq -r .id)
-curl -s https://crunch.stumason.dev/jobs/$JOB -H "Authorization: Bearer $KEY"
 ```
 
 ```python
-# OpenAI SDK — embeddings
+# Drop-in for the OpenAI SDK
 from openai import OpenAI
 client = OpenAI(base_url="https://crunch.stumason.dev", api_key="crunch_...")
 client.embeddings.create(model="crunch", input=["hello", "world"])
 ```
 
-## Why these models
+Store the vectors in Postgres with [pgvector](https://github.com/pgvector/pgvector):
+`embedding vector(1024)`, then `ORDER BY embedding <=> '[...]'`.
 
-Inference runs through transformers-php, so a model needs an ONNX export **and** an
-architecture/tokenizer/processor that transformers-php implements. Within that envelope the
-set above is best-in-class; a couple of slots are capped by library coverage (notably
-captioning, stuck at vit-gpt2 until a better captioner is supported — a sidecar is planned).
-Every model is a one-line swap in `config/crunch.php`.
+## Authentication
 
-## Architecture
+Send `Authorization: Bearer <token>` on every request. Create tokens in the dashboard — each
+has a **rate limit** (req/min) and an optional **monthly quota**, and every call is logged for
+the usage dashboard. Media endpoints (`/classify-image`, `/caption`, `/transcribe`) accept a
+public `url`, a base64 string, or a multipart file upload.
 
-- **One container.** Laravel + Octane (FrankenPHP). Models load lazily, stay warm per worker.
-- **SQLite (WAL)** for data, **database queue** for async work, **database cache** — no Redis.
-- **transformers-php** (ONNX Runtime via FFI) for all inference.
-- Async (transcription) runs on a queue worker in the same container; clients poll `/jobs/{id}`.
-- Usage is logged per request; per-token rate limits + monthly quotas are enforced in middleware.
+Full, interactive reference (with "Try it"): **[/docs/api](https://crunch.stumason.dev/docs/api)**.
+
+## How it works
+
+```
+                 ┌─────────────────────────────────────────┐
+  HTTP  ──────▶  │  Laravel + Octane (FrankenPHP)           │
+  (Bearer)       │   • CrunchAuth: tokens · quotas · usage  │
+                 │   • InferenceManager: warm models 🔥     │
+                 │   • transformers-php (ONNX Runtime / FFI)│
+                 │   • SQLite (WAL) · database queue        │
+                 └─────────────────────────────────────────┘
+```
+
+Inference runs in-process via [transformers-php](https://github.com/CodeWithKyrian/transformers-php).
+Heavy work (transcription) runs on a queue worker in the same container; clients poll `/jobs/{id}`.
 
 ## Self-hosting
 
-Deployed on [Coolify](https://coolify.io) from this repo's `Dockerfile`. Key bits:
-
-- Build: FrankenPHP base + `ffi`, `pdo_sqlite`, `libsndfile`/`ffmpeg`; composer pulls the
-  arm64 ONNX Runtime; Vite builds the React frontend.
-- Persistent volume at `/data` holds the model cache (`/data/models`) and the SQLite DB.
-- Env: `APP_KEY`, `CRUNCH_API_KEY` (legacy master key), `CRUNCH_MODEL_CACHE=/data/models`,
-  `CRUNCH_WARM=embed` (capabilities pre-loaded on boot), `OCTANE_WORKERS`, `DB_*=sqlite`.
+Deploys from this repo's `Dockerfile` (FrankenPHP base + FFI/ONNX/audio libs; Vite builds the UI).
+A persistent volume at `/data` holds the model cache and the SQLite DB.
 
 ```bash
-docker build -t crunch . && docker run -p 8000:8000 -v crunch-data:/data \
+docker build -t crunch .
+docker run -p 8000:8000 -v crunch-data:/data \
   -e APP_KEY=base64:... -e CRUNCH_API_KEY=... crunch
 ```
 
-## Local development
-
-```bash
-composer install && npm install
-php artisan migrate
-composer run dev          # serve + vite + queue
-```
-
-Run tests: `php artisan test`.
+Local dev: `composer install && npm install && php artisan migrate && composer run dev`.
+Tests: `php artisan test`.
 
 ## Roadmap
 
-- Better captioner via a sidecar (Florence-2 / Moondream) once viable.
-- More models behind the same gateway; image embeddings.
-- Automated model + transformers-php update tracking with alerts.
+- Better captioning via a sidecar VLM (Florence-2 / Moondream).
+- Image embeddings + more models behind the same gateway.
+- Automated model + library update tracking with alerts.
+
+---
+
+<div align="center">
+
+Built by **[Stuart Mason](https://stuartmason.co.uk)** · [@StuMason](https://github.com/StuMason)
+
+Made with idle ARM compute and spite for per-call pricing. MIT licensed — fork it, host it, hammer it.
+
+</div>
