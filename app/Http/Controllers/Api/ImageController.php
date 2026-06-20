@@ -36,7 +36,8 @@ class ImageController extends Controller
             'image' => ['sometimes'],           // base64 string or uploaded file
         ]);
 
-        [$image, $isTemp] = MediaResolver::resolve($request, 'image');
+        // libvips reads a local file (it can't fetch URLs), so download/persist first.
+        [$image, $isTemp] = MediaResolver::resolve($request, 'image', mustBeLocal: true);
 
         try {
             $results = $classify->handle($image, array_values($validated['labels']));
@@ -73,7 +74,8 @@ class ImageController extends Controller
             'image' => ['sometimes'],           // base64 string or uploaded file
         ]);
 
-        [$image, $isTemp] = MediaResolver::resolve($request, 'image');
+        // libvips reads a local file (it can't fetch URLs), so download/persist first.
+        [$image, $isTemp] = MediaResolver::resolve($request, 'image', mustBeLocal: true);
 
         try {
             $text = $caption->handle($image);

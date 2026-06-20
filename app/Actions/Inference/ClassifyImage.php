@@ -30,6 +30,6 @@ class ClassifyImage
 
         usort($results, fn (array $a, array $b): int => $b['score'] <=> $a['score']);
 
-        return array_values($results);
+        return $results;
     }
 }

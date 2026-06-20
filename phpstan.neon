@@ -11,3 +11,7 @@ parameters:
         - routes/
 
     level: 7
+
+    # The FFI/ONNX extension can crash phpstan's parallel workers; run single-process.
+    parallel:
+        maximumNumberOfProcesses: 1

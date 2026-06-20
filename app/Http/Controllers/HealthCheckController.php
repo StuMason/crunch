@@ -10,6 +10,7 @@ use Illuminate\Support\Facades\Redis;
 use Illuminate\Support\Facades\Storage;
 use Inertia\Inertia;
 use Inertia\Response;
+use Laravel\Reverb\ReverbServiceProvider;
 
 class HealthCheckController extends Controller
 {
@@ -33,12 +34,8 @@ class HealthCheckController extends Controller
             'storage' => $this->checkStorage(),
         ];
 
-        if (class_exists(\Laravel\Reverb\ReverbServiceProvider::class)) {
+        if (class_exists(ReverbServiceProvider::class)) {
             $checks['reverb'] = $this->checkReverb();
-        }
-
-        if (class_exists(\Laravel\Horizon\Horizon::class)) {
-            $checks['horizon'] = $this->checkHorizon();
         }
 
         return $checks;
@@ -230,39 +227,6 @@ class HealthCheckController extends Controller
             return [
                 'status' => 'error',
                 'message' => 'Storage failed: '.$throwable->getMessage(),
-                'latency_ms' => null,
-            ];
-        }
-    }
-
-    /**
-     * @return array{status: string, message: string, latency_ms: float|null}
-     */
-    private function checkHorizon(): array
-    {
-        $start = microtime(true);
-
-        try {
-            $masters = app(\Laravel\Horizon\Contracts\MasterSupervisorRepository::class)->all();
-            $latency = (microtime(true) - $start) * 1000;
-
-            if (count($masters) > 0) {
-                return [
-                    'status' => 'ok',
-                    'message' => 'Horizon is running ('.count($masters).' master supervisor(s))',
-                    'latency_ms' => round($latency, 2),
-                ];
-            }
-
-            return [
-                'status' => 'warning',
-                'message' => 'Horizon: no master supervisors found',
-                'latency_ms' => round($latency, 2),
-            ];
-        } catch (\Throwable $throwable) {
-            return [
-                'status' => 'error',
-                'message' => 'Horizon check failed: '.$throwable->getMessage(),
                 'latency_ms' => null,
             ];
         }

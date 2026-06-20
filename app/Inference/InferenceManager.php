@@ -41,7 +41,7 @@ class InferenceManager
     }
 
     /**
-     * @return array{kind: string, ...} The resolved config for a capability.
+     * @return array<array-key, mixed> The resolved config for a capability.
      */
     public function config(string $capability): array
     {

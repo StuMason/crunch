@@ -6,11 +6,15 @@ namespace App\Models;
 
 use App\Models\Traits\HasUid;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Carbon;
 
 /**
  * Tracks an asynchronous inference job (e.g. transcription) for poll-based retrieval.
  *
  * @property string $uid
+ * @property array<string, mixed>|null $result
+ * @property Carbon|null $completed_at
+ * @property Carbon|null $created_at
  */
 class InferenceJob extends Model
 {

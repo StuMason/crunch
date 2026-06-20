@@ -60,7 +60,7 @@ return [
         'sentiment' => [
             'kind' => 'pipeline',
             'task' => 'text-classification',
-            'model' => 'SamLowe/roberta-base-go_emotions',
+            'model' => 'SamLowe/roberta-base-go_emotions-onnx', // the -onnx repo has the ONNX files
             'top_k' => null,
         ],
         'moderate' => [

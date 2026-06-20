@@ -57,7 +57,7 @@ it('classifies an image against labels', function () {
         ->andReturn([['label' => 'a cat', 'score' => 0.97]]);
 
     $this->withToken('test-key')
-        ->postJson('/classify-image', ['url' => 'https://example.com/cat.jpg', 'labels' => ['a cat', 'a dog']])
+        ->postJson('/classify-image', ['image' => base64_encode('fake-img'), 'labels' => ['a cat', 'a dog']])
         ->assertOk()
         ->assertJsonPath('results.0.label', 'a cat');
 });
@@ -66,7 +66,7 @@ it('captions an image', function () {
     $this->mock(Caption::class)->shouldReceive('handle')->andReturn('a cat on a mat');
 
     $this->withToken('test-key')
-        ->postJson('/caption', ['url' => 'https://example.com/cat.jpg'])
+        ->postJson('/caption', ['image' => base64_encode('fake-img')])
         ->assertOk()
         ->assertJsonPath('caption', 'a cat on a mat');
 });

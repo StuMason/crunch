@@ -6,6 +6,7 @@ namespace App\Models\Traits;
 
 use App\Services\SqidService;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Model;
 
 trait HasUid
 {
@@ -63,16 +64,18 @@ trait HasUid
      */
     public static function findByUid(string $uid): ?static
     {
-        return static::where(
-            'id',
+        return static::query()->whereKey(
             app(SqidService::class)->decode($uid)[0] ?? null
-        )->firstOrFail();
+        )->first();
     }
 
     /**
      * Scope a query to a specific UID.
+     *
+     * @param  Builder<Model>  $query
+     * @return Builder<Model>
      */
-    public static function scopeWhereUid(Builder $query, string $uid): ?Builder
+    public static function scopeWhereUid(Builder $query, string $uid): Builder
     {
         return $query->where(
             'id',

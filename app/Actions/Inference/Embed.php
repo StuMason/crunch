@@ -47,6 +47,7 @@ class Embed
     /**
      * Flatten an arbitrarily-nested numeric array into a flat list of floats.
      *
+     * @param  array<array-key, mixed>  $nested
      * @return list<float>
      */
     private function flatten(array $nested): array

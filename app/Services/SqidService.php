@@ -28,6 +28,8 @@ class SqidService
 
     /**
      * Decode a UID to an ID.
+     *
+     * @return array<int>
      */
     public function decode(string $uid): array
     {
