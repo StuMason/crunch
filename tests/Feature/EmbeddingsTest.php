@@ -3,6 +3,9 @@
 declare(strict_types=1);
 
 use App\Actions\Inference\Embed;
+use Illuminate\Foundation\Testing\RefreshDatabase;
+
+uses(RefreshDatabase::class);
 
 beforeEach(function () {
     config(['crunch.api_key' => 'test-key']);
@@ -18,7 +21,7 @@ beforeEach(function () {
 it('rejects requests without a bearer key', function () {
     $this->postJson('/v1/embeddings', ['input' => 'hello'])
         ->assertStatus(401)
-        ->assertJson(['error' => 'Invalid or missing API key.']);
+        ->assertJsonStructure(['error']);
 });
 
 it('rejects requests with the wrong key', function () {

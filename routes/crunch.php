@@ -6,7 +6,7 @@ use App\Http\Controllers\Api\EmbeddingController;
 use App\Http\Controllers\Api\ImageController;
 use App\Http\Controllers\Api\TextController;
 use App\Http\Controllers\Api\TranscriptionController;
-use App\Http\Middleware\CrunchApiKey;
+use App\Http\Middleware\CrunchAuth;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -15,9 +15,9 @@ use Illuminate\Support\Facades\Route;
 |--------------------------------------------------------------------------
 | Mounted at the domain root (no /api prefix) so OpenAI SDKs and the existing
 | `/crunch` skill work against base_url = https://crunch.stumason.dev.
-| Guarded by the interim bearer key; swapped to Sanctum per-token auth later.
+| Auth: Sanctum personal access token OR the legacy master key (CrunchAuth).
 */
-Route::middleware(CrunchApiKey::class)->group(function () {
+Route::middleware(CrunchAuth::class)->group(function () {
     // Embeddings
     Route::post('/v1/embeddings', [EmbeddingController::class, 'openai']);
     Route::post('/embed', [EmbeddingController::class, 'embed']);

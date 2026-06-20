@@ -2,10 +2,16 @@
 
 namespace App\Providers;
 
+use App\Http\Middleware\CrunchAuth;
 use App\Inference\InferenceManager;
 use Carbon\CarbonImmutable;
+use Dedoc\Scramble\Scramble;
+use Dedoc\Scramble\Support\Generator\OpenApi;
+use Dedoc\Scramble\Support\Generator\SecurityScheme;
+use Illuminate\Routing\Route;
 use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\ServiceProvider;
 use Illuminate\Validation\Rules\Password;
 use Laravel\Telescope\TelescopeServiceProvider as BaseTelescopeServiceProvider;
@@ -35,6 +41,22 @@ class AppServiceProvider extends ServiceProvider
     public function boot(): void
     {
         $this->configureDefaults();
+        $this->configureApiDocs();
+    }
+
+    /**
+     * Document only the inference endpoints (root-level, behind CrunchAuth) and
+     * make the interactive reference at /docs/api publicly viewable.
+     */
+    protected function configureApiDocs(): void
+    {
+        Scramble::configure()
+            ->routes(fn (Route $route): bool => in_array(CrunchAuth::class, $route->gatherMiddleware(), true))
+            ->withDocumentTransformers(function (OpenApi $openApi): void {
+                $openApi->secure(SecurityScheme::http('bearer'));
+            });
+
+        Gate::define('viewApiDocs', fn ($user = null): bool => true);
     }
 
     /**

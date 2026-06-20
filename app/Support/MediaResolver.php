@@ -5,14 +5,18 @@ declare(strict_types=1);
 namespace App\Support;
 
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Http;
 use RuntimeException;
 
 /**
  * Resolve a media input (image/audio) from a request into something a
- * transformers-php pipeline can consume: a URL (pipelines fetch images directly)
- * or a local file path (required for audio, and for base64/uploaded inputs).
+ * transformers-php pipeline can consume: a validated http(s) URL (pipelines fetch
+ * images directly) or a local file path (required for audio, base64, uploads).
  *
  * Accepts, in order: `url`, a base64 `$field`, or a multipart-uploaded `$field`.
+ *
+ * URL inputs are guarded against SSRF: http(s) only, and the host must not resolve
+ * to a private/reserved address (the box runs internal-only services).
  */
 class MediaResolver
 {
@@ -23,6 +27,7 @@ class MediaResolver
     {
         if ($request->filled('url')) {
             $url = (string) $request->input('url');
+            self::assertSafeUrl($url);
 
             return $mustBeLocal ? [self::download($url), true] : [$url, false];
         }
@@ -46,15 +51,43 @@ class MediaResolver
         abort(422, "Provide a '{$field}' (base64 string or uploaded file) or a 'url'.");
     }
 
-    private static function download(string $url): string
+    /**
+     * Reject non-http(s) schemes and URLs that resolve to private/reserved IPs (SSRF guard).
+     */
+    private static function assertSafeUrl(string $url): void
     {
-        $contents = @file_get_contents($url);
+        $parts = parse_url($url);
+        $scheme = strtolower($parts['scheme'] ?? '');
+        $host = $parts['host'] ?? '';
 
-        if ($contents === false) {
-            throw new RuntimeException("Could not fetch media from URL: {$url}");
+        if (! in_array($scheme, ['http', 'https'], true) || $host === '') {
+            abort(422, 'url must be an absolute http(s) URL.');
         }
 
-        return self::writeTemp($contents);
+        $ips = filter_var($host, FILTER_VALIDATE_IP) ? [$host] : (gethostbynamel($host) ?: []);
+
+        if ($ips === []) {
+            abort(422, 'Could not resolve url host.');
+        }
+
+        foreach ($ips as $ip) {
+            if (! filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE)) {
+                abort(422, 'url must not resolve to a private or reserved address.');
+            }
+        }
+    }
+
+    private static function download(string $url): string
+    {
+        // No redirect-following (a redirect could bounce to an internal host),
+        // and the HTTP client never honours file:// / php:// like file_get_contents would.
+        $response = Http::withOptions(['allow_redirects' => false])->timeout(20)->get($url);
+
+        if (! $response->successful()) {
+            throw new RuntimeException("Could not fetch media from URL (HTTP {$response->status()}).");
+        }
+
+        return self::writeTemp($response->body());
     }
 
     private static function writeTemp(string $contents): string
