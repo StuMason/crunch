@@ -12,8 +12,18 @@ use Illuminate\Http\Request;
 class EmbeddingController extends Controller
 {
     /**
-     * OpenAI-compatible embeddings endpoint: POST /v1/embeddings.
-     * Accepts `input` as a string or array of strings.
+     * Embeddings (OpenAI-compatible)
+     *
+     * Turns text into a **vector** — a list of 1024 numbers that captures the text's
+     * *meaning*. Texts that mean similar things get similar vectors, so you can power
+     * semantic search, "find related items", clustering, and RAG by comparing vectors
+     * (cosine similarity). Vectors come back already unit-normalized.
+     *
+     * **Send:** `input` — one string, or an array of strings to embed in a batch.
+     * **Get back:** the OpenAI shape — `data[].embedding`.
+     *
+     * This is a drop-in for OpenAI's embeddings endpoint: point any OpenAI SDK at
+     * `base_url = https://crunch.stumason.dev` and it just works.
      */
     public function openai(Request $request, Embed $embed): JsonResponse
     {
@@ -43,8 +53,13 @@ class EmbeddingController extends Controller
     }
 
     /**
-     * Native embeddings endpoint: POST /embed. Accepts `inputs` (string|array),
-     * returns a bare list of vectors.
+     * Embeddings (simple)
+     *
+     * The same as `/v1/embeddings` but with a plainer shape — handy if you're not
+     * using an OpenAI SDK.
+     *
+     * **Send:** `inputs` — one string, or an array of strings.
+     * **Get back:** a bare list of vectors, one per input, in the same order.
      */
     public function embed(Request $request, Embed $embed): JsonResponse
     {
