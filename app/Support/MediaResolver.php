@@ -79,9 +79,20 @@ class MediaResolver
 
     private static function download(string $url): string
     {
-        // No redirect-following (a redirect could bounce to an internal host),
-        // and the HTTP client never honours file:// / php:// like file_get_contents would.
-        $response = Http::withOptions(['allow_redirects' => false])->timeout(20)->get($url);
+        // Follow redirects (CDNs commonly 301), but re-validate every hop against the
+        // SSRF guard so a public URL can't bounce to an internal host. http(s) only;
+        // the HTTP client never honours file:// / php:// like file_get_contents would.
+        $response = Http::withOptions([
+            'allow_redirects' => [
+                'max' => 5,
+                'strict' => true,
+                'referer' => false,
+                'protocols' => ['http', 'https'],
+                'on_redirect' => function ($request, $response, $uri): void {
+                    self::assertSafeUrl((string) $uri);
+                },
+            ],
+        ])->timeout(20)->get($url);
 
         if (! $response->successful()) {
             throw new RuntimeException("Could not fetch media from URL (HTTP {$response->status()}).");
