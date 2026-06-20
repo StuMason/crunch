@@ -85,6 +85,7 @@ return [
             'kind' => 'pipeline',
             'task' => 'automatic-speech-recognition',
             'model' => 'onnx-community/distil-small.en',
+            'quantized' => false, // spike-proven fp32; runs in the queue worker, lazy-loaded
             'async' => true,
         ],
     ],

@@ -17,6 +17,14 @@ fi
 php artisan migrate --force --no-interaction || true
 php artisan config:clear
 
+# Background queue worker (database queue) for async jobs e.g. transcription.
+# Auto-restarts if it dies; --max-jobs recycles it so the loaded Whisper model
+# doesn't accumulate memory. Octane remains the main (health) process.
+( while true; do
+    php artisan queue:work --sleep=2 --tries=1 --timeout=600 --max-jobs=25 || true
+    sleep 2
+  done ) &
+
 # Long-running Octane server (FrankenPHP). Each worker holds its own warm copy of
 # the models, so the worker count is bounded (FrankenPHP otherwise defaults to one
 # per CPU — 16 here — which would multiply model RAM). Tune via OCTANE_WORKERS.
