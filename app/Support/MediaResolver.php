@@ -6,7 +6,6 @@ namespace App\Support;
 
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
-use RuntimeException;
 
 /**
  * Resolve a media input (image/audio) from a request into something a
@@ -82,7 +81,12 @@ class MediaResolver
         // Follow redirects (CDNs commonly 301), but re-validate every hop against the
         // SSRF guard so a public URL can't bounce to an internal host. http(s) only;
         // the HTTP client never honours file:// / php:// like file_get_contents would.
-        $response = Http::withOptions([
+        $response = Http::withHeaders([
+            // Many hosts (Wikimedia, GitHub raw, some CDNs) 403 the default Guzzle
+            // User-Agent. Send a descriptive one so public URLs actually fetch.
+            'User-Agent' => 'crunch/1.0 (+https://crunch.stumason.dev)',
+            'Accept' => '*/*',
+        ])->withOptions([
             'allow_redirects' => [
                 'max' => 5,
                 'strict' => true,
@@ -95,7 +99,8 @@ class MediaResolver
         ])->timeout(20)->get($url);
 
         if (! $response->successful()) {
-            throw new RuntimeException("Could not fetch media from URL (HTTP {$response->status()}).");
+            // The client gave us a URL we can't fetch — that's a 422, not a 500.
+            abort(422, "Could not fetch media from URL (HTTP {$response->status()}).");
         }
 
         return self::writeTemp($response->body());
