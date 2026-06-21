@@ -28,7 +28,7 @@ class TextController extends Controller
     {
         $validated = $request->validate([
             'query' => ['required', 'string'],
-            'texts' => ['required', 'array', 'min:1'],
+            'texts' => ['required', 'array', 'min:1', 'max:'.(int) config('crunch.max_batch', 64)],
             'texts.*' => ['string'],
             'top_k' => ['sometimes', 'integer', 'min:1'],
         ]);

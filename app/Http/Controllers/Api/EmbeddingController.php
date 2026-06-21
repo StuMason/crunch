@@ -24,11 +24,15 @@ class EmbeddingController extends Controller
      *
      * This is a drop-in for OpenAI's embeddings endpoint: point any OpenAI SDK at
      * `base_url = https://crunch.stumason.dev` and it just works.
+     *
+     * **Batching:** inputs are embedded one at a time on CPU (~100–175ms each), so keep
+     * a single request to **64 inputs or fewer** (the hard cap; larger requests get a
+     * 422). For bulk backfills, chunk client-side and send the chunks in sequence.
      */
     public function openai(Request $request, Embed $embed): JsonResponse
     {
         $validated = $request->validate([
-            'input' => ['required'],
+            'input' => ['required', $this->stringOrArrayRule()],
             'input.*' => ['string'],
         ]);
 
@@ -64,7 +68,7 @@ class EmbeddingController extends Controller
     public function embed(Request $request, Embed $embed): JsonResponse
     {
         $validated = $request->validate([
-            'inputs' => ['required'],
+            'inputs' => ['required', $this->stringOrArrayRule()],
             'inputs.*' => ['string'],
         ]);
 
@@ -74,10 +78,30 @@ class EmbeddingController extends Controller
     }
 
     /**
+     * Reject scalars that aren't strings (e.g. a bare number) so input isn't silently
+     * coerced. A single string or an array of strings is allowed.
+     */
+    private function stringOrArrayRule(): \Closure
+    {
+        return function (string $attribute, mixed $value, \Closure $fail): void {
+            if (! is_string($value) && ! is_array($value)) {
+                $fail("The {$attribute} field must be a string or an array of strings.");
+            }
+        };
+    }
+
+    /**
      * @return list<string>
      */
     private function normaliseTexts(mixed $input): array
     {
-        return array_values(array_map(strval(...), is_array($input) ? $input : [$input]));
+        $texts = array_values(array_map(strval(...), is_array($input) ? $input : [$input]));
+
+        $max = (int) config('crunch.max_batch', 64);
+        if (count($texts) > $max) {
+            abort(422, "Too many inputs: {$max} max per request (got ".count($texts).'). Chunk the request client-side.');
+        }
+
+        return $texts;
     }
 }

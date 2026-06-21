@@ -54,3 +54,18 @@ it('validates that input is required', function () {
         ->postJson('/v1/embeddings', [])
         ->assertStatus(422);
 });
+
+it('rejects a bare number instead of silently coercing it to a string', function () {
+    $this->withToken('test-key')
+        ->postJson('/embed', ['inputs' => 12345])
+        ->assertStatus(422)
+        ->assertJsonValidationErrors('inputs');
+});
+
+it('rejects a batch larger than the configured max', function () {
+    config(['crunch.max_batch' => 3]);
+
+    $this->withToken('test-key')
+        ->postJson('/v1/embeddings', ['input' => ['a', 'b', 'c', 'd']])
+        ->assertStatus(422);
+});

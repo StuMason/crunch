@@ -43,9 +43,19 @@ class CrunchAuth
             return $this->deny('Invalid or expired API key.', 401);
         }
 
-        if ($limit = $this->rateLimited($token)) {
-            return $this->deny("Rate limit exceeded. Retry in {$limit}s.", 429);
+        $perMinute = (int) ($token->rate_limit_per_minute ?: 120);
+        $key = "crunch-token:{$token->id}";
+
+        if (RateLimiter::tooManyAttempts($key, $perMinute)) {
+            $retryAfter = RateLimiter::availableIn($key);
+            $response = $this->deny("Rate limit exceeded. Retry in {$retryAfter}s.", 429);
+            $response->headers->set('Retry-After', (string) $retryAfter);
+            $this->attachRateLimitHeaders($response, $perMinute, 0, $retryAfter);
+
+            return $response;
         }
+
+        RateLimiter::hit($key, 60);
 
         if ($this->quotaExceeded($token)) {
             return $this->deny('Monthly quota exceeded.', 429);
@@ -57,7 +67,24 @@ class CrunchAuth
         $request->attributes->set('crunch_t0', hrtime(true));
         $request->setUserResolver(fn () => $token->tokenable);
 
-        return $next($request);
+        $response = $next($request);
+
+        // Standard rate-limit headers so OpenAI/HTTP SDKs can back off intelligently.
+        $this->attachRateLimitHeaders(
+            $response,
+            $perMinute,
+            max(0, RateLimiter::remaining($key, $perMinute)),
+            RateLimiter::availableIn($key),
+        );
+
+        return $response;
+    }
+
+    private function attachRateLimitHeaders(Response $response, int $limit, int $remaining, int $reset): void
+    {
+        $response->headers->set('X-RateLimit-Limit', (string) $limit);
+        $response->headers->set('X-RateLimit-Remaining', (string) $remaining);
+        $response->headers->set('X-RateLimit-Reset', (string) $reset);
     }
 
     public function terminate(Request $request, Response $response): void
@@ -80,20 +107,6 @@ class CrunchAuth
         } catch (\Throwable $e) {
             report($e);
         }
-    }
-
-    private function rateLimited(PersonalAccessToken $token): int
-    {
-        $perMinute = (int) ($token->rate_limit_per_minute ?: 120);
-        $key = "crunch-token:{$token->id}";
-
-        if (RateLimiter::tooManyAttempts($key, $perMinute)) {
-            return RateLimiter::availableIn($key);
-        }
-
-        RateLimiter::hit($key, 60);
-
-        return 0;
     }
 
     private function quotaExceeded(PersonalAccessToken $token): bool

@@ -20,7 +20,18 @@ class TranscribeJob implements ShouldQueue
 
     public int $timeout = 600;
 
-    public int $tries = 1;
+    public int $tries = 3;
+
+    /**
+     * Wait between retries — a transient blip (slow model load, a momentary FFI
+     * hiccup) shouldn't burn all attempts at once.
+     *
+     * @return list<int>
+     */
+    public function backoff(): array
+    {
+        return [5, 15];
+    }
 
     public function __construct(
         public int $jobId,
@@ -32,17 +43,17 @@ class TranscribeJob implements ShouldQueue
         $job = InferenceJob::findOrFail($this->jobId);
         $job->update(['status' => InferenceJob::STATUS_PROCESSING]);
 
-        try {
-            $text = $transcribe->handle($this->audioPath);
+        // Do NOT delete the audio here on failure: with tries > 1 the file must survive
+        // between attempts. Cleanup happens on success below and in failed() (terminal).
+        $text = $transcribe->handle($this->audioPath);
 
-            $job->update([
-                'status' => InferenceJob::STATUS_COMPLETED,
-                'result' => ['text' => $text],
-                'completed_at' => now(),
-            ]);
-        } finally {
-            @unlink($this->audioPath);
-        }
+        $job->update([
+            'status' => InferenceJob::STATUS_COMPLETED,
+            'result' => ['text' => $text],
+            'completed_at' => now(),
+        ]);
+
+        @unlink($this->audioPath);
     }
 
     public function failed(Throwable $e): void

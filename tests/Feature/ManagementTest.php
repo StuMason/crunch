@@ -33,6 +33,18 @@ it('rejects a revoked token', function () {
         ->assertStatus(401);
 });
 
+it('returns standard rate-limit headers on a token request', function () {
+    $user = User::factory()->create();
+    $plain = $user->createToken('app')->plainTextToken;
+
+    $this->withToken($plain)
+        ->postJson('/embed', ['inputs' => 'hello'])
+        ->assertOk()
+        ->assertHeader('X-RateLimit-Limit')
+        ->assertHeader('X-RateLimit-Remaining')
+        ->assertHeader('X-RateLimit-Reset');
+});
+
 it('still accepts the legacy master key', function () {
     $this->withToken('master-key')
         ->postJson('/embed', ['inputs' => 'hello'])

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Support;
 
+use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
 
@@ -81,22 +82,28 @@ class MediaResolver
         // Follow redirects (CDNs commonly 301), but re-validate every hop against the
         // SSRF guard so a public URL can't bounce to an internal host. http(s) only;
         // the HTTP client never honours file:// / php:// like file_get_contents would.
-        $response = Http::withHeaders([
-            // Many hosts (Wikimedia, GitHub raw, some CDNs) 403 the default Guzzle
-            // User-Agent. Send a descriptive one so public URLs actually fetch.
-            'User-Agent' => 'crunch/1.0 (+https://crunch.stumason.dev)',
-            'Accept' => '*/*',
-        ])->withOptions([
-            'allow_redirects' => [
-                'max' => 5,
-                'strict' => true,
-                'referer' => false,
-                'protocols' => ['http', 'https'],
-                'on_redirect' => function ($request, $response, $uri): void {
-                    self::assertSafeUrl((string) $uri);
-                },
-            ],
-        ])->timeout(20)->get($url);
+        try {
+            $response = Http::withHeaders([
+                // Many hosts (Wikimedia, GitHub raw, some CDNs) 403 the default Guzzle
+                // User-Agent. Send a descriptive one so public URLs actually fetch.
+                'User-Agent' => 'crunch/1.0 (+https://crunch.stumason.dev)',
+                'Accept' => '*/*',
+            ])->withOptions([
+                'allow_redirects' => [
+                    'max' => 5,
+                    'strict' => true,
+                    'referer' => false,
+                    'protocols' => ['http', 'https'],
+                    'on_redirect' => function ($request, $response, $uri): void {
+                        self::assertSafeUrl((string) $uri);
+                    },
+                ],
+            ])->timeout(20)->get($url);
+        } catch (ConnectionException $e) {
+            // DNS failure, refused connection or timeout — the client's URL is at fault,
+            // not the server. Surface a 422 instead of letting it bubble to a 500.
+            abort(422, 'Could not fetch media from URL (connection failed).');
+        }
 
         if (! $response->successful()) {
             // The client gave us a URL we can't fetch — that's a 422, not a 500.

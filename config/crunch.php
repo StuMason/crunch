@@ -23,6 +23,17 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Max batch size
+    |--------------------------------------------------------------------------
+    | Inference runs one input at a time on CPU (~100-175ms each), so a single
+    | request with too many inputs walks straight into the Octane worker timeout
+    | and 500s. Cap the count and return a clean 422 instead. Bulk backfills
+    | should chunk client-side and stay at or under this.
+    */
+    'max_batch' => (int) env('CRUNCH_MAX_BATCH', 64),
+
+    /*
+    |--------------------------------------------------------------------------
     | Pre-warm
     |--------------------------------------------------------------------------
     | Capabilities to load into memory when an Octane worker boots, so the first
