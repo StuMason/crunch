@@ -101,9 +101,21 @@ class MediaResolver
         return self::writeTemp($response->body());
     }
 
+    /**
+     * Write media to a deterministic app path (storage/app/crunch-media), not the system
+     * temp dir: async jobs run in a separate process from the Octane/FrankenPHP web worker,
+     * and FrankenPHP's per-process temp dir isn't reliably visible to the queue worker.
+     * storage_path() resolves identically in both, so the file is always found.
+     */
     private static function writeTemp(string $contents): string
     {
-        $path = tempnam(sys_get_temp_dir(), 'crunch_');
+        $dir = storage_path('app/crunch-media');
+
+        if (! is_dir($dir)) {
+            mkdir($dir, 0775, true);
+        }
+
+        $path = $dir.'/'.uniqid('crunch_', true);
         file_put_contents($path, $contents);
 
         return $path;
