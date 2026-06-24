@@ -28,13 +28,11 @@ php artisan config:clear
 # Long-running Octane server (FrankenPHP). Each worker holds its own warm copy of
 # the models, so the worker count is bounded (FrankenPHP otherwise defaults to one
 # per CPU — 16 here — which would multiply model RAM). Tune via OCTANE_WORKERS.
-# Security: Octane's FrankenPHP php_server executes any on-disk .php, so block
-# execution under /storage and /uploads (web-shell hardening, injected into the
-# Caddy route block before php_server). Mirrors the nginx fix on the sibling apps.
-export CADDY_SERVER_EXTRA_DIRECTIVES="@denyStoragePhp path_regexp ^/(storage|uploads)/.*\.php\$
-respond @denyStoragePhp 403"
-
+# Security: custom Caddyfile 403s PHP under /storage and /uploads (web-shell
+# hardening). CADDY_SERVER_EXTRA_DIRECTIVES is reserved by Octane for Mercure,
+# so we pass our own Caddyfile via --caddyfile instead.
 exec php artisan octane:start --server=frankenphp \
+    --caddyfile=/app/docker/Caddyfile \
     --host=0.0.0.0 --port=8000 \
     --workers="${OCTANE_WORKERS:-2}" \
     --max-requests="${OCTANE_MAX_REQUESTS:-500}"
