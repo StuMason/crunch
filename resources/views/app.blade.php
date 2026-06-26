@@ -34,6 +34,12 @@
         <link rel="icon" href="/favicon.svg" type="image/svg+xml">
         <link rel="apple-touch-icon" href="/apple-touch-icon.png">
 
+        {{-- Umami analytics — only when a website id is configured (production). Tracks all
+             visits, including our own dashboard usage (no self-exclusion). --}}
+        @if (config('services.umami.website_id'))
+            <script defer src="{{ config('services.umami.url') }}/script.js" data-website-id="{{ config('services.umami.website_id') }}"></script>
+        @endif
+
         @fonts
 
         @viteReactRefresh
