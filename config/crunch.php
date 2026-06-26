@@ -37,6 +37,20 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Vision sidecar
+    |--------------------------------------------------------------------------
+    | Image captioning (Florence-2-base) runs in a small Python service — the ONNX
+    | core caps image-to-text at vit-gpt2. Reached over the internal compose network;
+    | never exposed publicly. Captioning on CPU is seconds, not milliseconds, but it's
+    | a single synchronous call, so the timeout is short relative to the ASR one.
+    */
+    'vision' => [
+        'url' => env('CRUNCH_VISION_URL', 'http://vision:9000'),
+        'timeout' => (int) env('CRUNCH_VISION_TIMEOUT', 120),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Max batch size
     |--------------------------------------------------------------------------
     | Inference runs one input at a time on CPU (~100-175ms each), so a single
@@ -108,10 +122,12 @@ return [
             'model' => 'Xenova/clip-vit-large-patch14',
         ],
         'caption' => [
-            // capped at vit-gpt2 in transformers-php (BLIP/Florence-2 unsupported)
-            'kind' => 'pipeline',
-            'task' => 'image-to-text',
-            'model' => 'Xenova/vit-gpt2-image-captioning',
+            // Moved to the Python vision sidecar (vision-sidecar/): Florence-2-base. The
+            // ONNX/transformers-php image-to-text pipeline caps out at vit-gpt2, so a real
+            // captioner has to live in Python — same pattern as transcribe. Crunch calls it
+            // over the internal compose network (see the `vision` block below).
+            'kind' => 'sidecar',
+            'model' => env('CRUNCH_VISION_MODEL', 'microsoft/Florence-2-base'),
         ],
         'transcribe' => [
             // Verbatim STT runs in the Python ASR sidecar (asr-sidecar/), NOT the

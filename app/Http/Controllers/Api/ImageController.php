@@ -56,16 +56,17 @@ class ImageController extends Controller
     /**
      * Caption an image (it writes the description)
      *
-     * Open-ended: crunch looks at the picture and writes a short sentence describing
-     * it — you don't supply any options. (Captioning is the model's weak spot for now;
-     * it's a small older model, so expect simple captions.)
+     * Open-ended: crunch looks at the picture and writes a sentence describing it — you
+     * don't supply any options. Runs Florence-2-base in the vision sidecar, so captions
+     * are detailed and accurate (it'll often name the subject, setting and action). CPU
+     * inference takes a few seconds.
      *
      * **Send the image one of three ways** (same as classify):
      * - `application/json` with `"url"`: `{"url": "https://…/cat.jpg"}`
      * - `application/json` with `"image"`: base64 string — `{"image": "<base64>"}`
      * - `multipart/form-data`: `curl -F image=@cat.jpg`
      *
-     * **Get back:** `{ "caption": "a cat laying on a blanket" }`.
+     * **Get back:** `{ "caption": "A grey cat curled up asleep on a knitted blanket." }`.
      */
     public function caption(Request $request, Caption $caption): JsonResponse
     {

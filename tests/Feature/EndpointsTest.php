@@ -73,6 +73,26 @@ it('captions an image', function () {
         ->assertJsonPath('caption', 'a cat on a mat');
 });
 
+it('captions an image via the vision sidecar (Florence-2)', function () {
+    config(['crunch.vision.url' => 'http://vision:9000']);
+
+    Http::fake([
+        'vision:9000/caption' => Http::response([
+            'model' => 'microsoft/Florence-2-base',
+            'task' => '<CAPTION>',
+            'caption' => 'A brown dog standing on green grass.',
+        ], 200),
+    ]);
+
+    $imagePath = tempnam(sys_get_temp_dir(), 'vision-test');
+    file_put_contents($imagePath, 'fake-image-bytes');
+
+    $caption = app(Caption::class)->handle($imagePath);
+
+    expect($caption)->toBe('A brown dog standing on green grass.');
+    Http::assertSent(fn ($request) => str_contains($request->url(), '/caption'));
+});
+
 it('queues a transcription and returns a pollable job', function () {
     Queue::fake();
 

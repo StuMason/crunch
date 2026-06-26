@@ -40,11 +40,11 @@ vendor — and to babysitting a pile of separate model servers.
 | Endpoint | What it does | Model |
 | --- | --- | --- |
 | `POST /v1/embeddings` · `/embed` | Text → vector (semantic search, RAG, similarity) | Qwen3-Embedding-0.6B (1024-d) |
-| `POST /rerank` | Re-order candidates by true relevance to a query | ms-marco-MiniLM |
+| `POST /rerank` | Re-order candidates by true relevance to a query | ms-marco-MiniLM-L-12 |
 | `POST /sentiment` | Emotion / sentiment across 28 categories | go_emotions |
 | `POST /moderate` | Flag harmful content (multi-category) | KoalaAI Text-Moderation |
-| `POST /classify-image` | Score an image against your own labels (zero-shot) | CLIP |
-| `POST /caption` | Describe an image in words | vit-gpt2 |
+| `POST /classify-image` | Score an image against your own labels (zero-shot) | CLIP ViT-L/14 |
+| `POST /caption` | Describe an image in words | Florence-2-base (Python sidecar) |
 | `POST /transcribe` → `GET /jobs/{id}` | Speech → text + word timestamps (async) | Whisper large-v3-turbo (Python sidecar) |
 
 Every model is a **one-line swap** in `config/crunch.php`.
@@ -53,7 +53,7 @@ Every model is a **one-line swap** in `config/crunch.php`.
 
 - **🔌 OpenAI-compatible** — point any OpenAI SDK at the base URL and embeddings just work.
 - **⚡ Warm & fast** — Octane keeps models loaded; no cold reload per request.
-- **📦 Lean stack** — SQLite + database queue; PHP/ONNX core container + a Python speech-to-text sidecar. No Postgres, no Redis, no GPU.
+- **📦 Lean stack** — SQLite + database queue; PHP/ONNX core container + Python speech-to-text and vision sidecars. No Postgres, no Redis, no GPU.
 - **🔐 Yours** — self-hosted; your data never leaves your infrastructure.
 - **🎛️ Batteries included** — API tokens, per-token rate limits + monthly quotas, usage
   dashboard, and auto-generated interactive docs, all built in.
@@ -106,22 +106,27 @@ flowchart TD
         onnx["transformers-php · ONNX Runtime / FFI"]
         store[("SQLite WAL · database queue")]
     end
-    app -- "HTTP · internal · /transcribe only" --> asr
+    app -- "HTTP · internal · /transcribe" --> asr
+    app -- "HTTP · internal · /caption" --> vision
     subgraph asr["asr — Python speech-to-text sidecar"]
         fw["faster-whisper · large-v3-turbo"]
+    end
+    subgraph vision["vision — Python vision sidecar"]
+        fl["transformers · Florence-2-base"]
     end
 ```
 
 Encoder inference runs in-process via [transformers-php](https://github.com/CodeWithKyrian/transformers-php).
-Transcription runs async: a queue worker hands the audio to the `asr` sidecar (faster-whisper),
-and clients poll `/jobs/{id}`. (Verbatim models like CrisperWhisper need a GPU; turbo is the
-CPU-friendly choice — edator pairs the word timestamps with its own onset detection for fillers.)
+Two capabilities ONNX can't do live in small Python sidecars: **transcription** (async — a queue
+worker hands audio to the `asr` sidecar/faster-whisper, clients poll `/jobs/{id}`; verbatim models
+like CrisperWhisper need a GPU, so turbo is the CPU-friendly choice) and **captioning** (synchronous
+— `/caption` calls the `vision` sidecar/Florence-2-base, which transformers-php can't run).
 
 ## Self-hosting
 
 Deploys from this repo's `docker-compose.yaml` — the `app` service (FrankenPHP base + FFI/ONNX/audio
-libs; Vite builds the UI) plus the `asr` Python sidecar. Persistent volumes hold the model caches
-and the SQLite DB.
+libs; Vite builds the UI) plus the `asr` and `vision` Python sidecars. Persistent volumes hold the
+model caches and the SQLite DB.
 
 ```bash
 docker build -t crunch .
@@ -134,7 +139,7 @@ Tests: `php artisan test`.
 
 ## Roadmap
 
-- Better captioning via a sidecar VLM (Florence-2 / Moondream).
+- Expose Florence-2's other tasks (OCR, object detection, region captions) as endpoints.
 - Image embeddings + more models behind the same gateway.
 - Automated model + library update tracking with alerts.
 

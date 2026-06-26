@@ -4,22 +4,18 @@ declare(strict_types=1);
 
 namespace App\Actions\Inference;
 
-use App\Inference\InferenceManager;
+use App\Inference\VisionClient;
 
 /**
- * Image captioning (image-to-text). Capped at vit-gpt2 in transformers-php — see
- * config/crunch.php; a better captioner is a planned sidecar.
+ * Image captioning. Runs in the Python vision sidecar (Florence-2-base) because the
+ * ONNX/transformers-php image-to-text pipeline caps at vit-gpt2 — see config/crunch.php.
  */
 class Caption
 {
-    public function __construct(private readonly InferenceManager $inference) {}
+    public function __construct(private readonly VisionClient $vision) {}
 
     public function handle(string $image): string
     {
-        $pipeline = $this->inference->engine('caption');
-
-        $output = $pipeline($image);
-
-        return trim((string) (($output[0]['generated_text'] ?? '')));
+        return trim($this->vision->caption($image)['caption'] ?? '');
     }
 }

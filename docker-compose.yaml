@@ -1,7 +1,8 @@
 # crunch — multi-service stack for Coolify (docker-compose deployment).
 #
-#   app : FrankenPHP/Octane + the PHP/ONNX core (web + in-process queue worker).
-#   asr : Whisper large-v3-turbo sidecar (faster-whisper). Internal only.
+#   app    : FrankenPHP/Octane + the PHP/ONNX core (web + in-process queue worker).
+#   asr    : Whisper large-v3-turbo sidecar (faster-whisper). Internal only.
+#   vision : Florence-2-base captioning sidecar (transformers). Internal only.
 #
 # Traefik routing for the public domain is declared explicitly on `app` below —
 # Coolify's SERVICE_FQDN magic doesn't wire it for compose deploys, so we attach the
@@ -14,9 +15,12 @@ services:
     restart: unless-stopped
     depends_on:
       - asr
+      - vision
     environment:
       CRUNCH_ASR_URL: http://asr:9000
       CRUNCH_ASR_TIMEOUT: "600"
+      CRUNCH_VISION_URL: http://vision:9000
+      CRUNCH_VISION_TIMEOUT: "120"
       # APP_KEY, CRUNCH_API_KEY, DB_*, etc. are injected by Coolify's app env.
     volumes:
       - models:/data/models       # ONNX model cache (transformers-php)
@@ -56,6 +60,19 @@ services:
     networks:
       - default                    # internal only; never exposed to Traefik
 
+  vision:
+    build:
+      context: ./vision-sidecar
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      VISION_MODEL: microsoft/Florence-2-base
+      HF_HOME: /models
+    volumes:
+      - vision_models:/models      # HF cache — persists the model download
+    networks:
+      - default                    # internal only; never exposed to Traefik
+
 networks:
   coolify:
     external: true
@@ -65,3 +82,4 @@ volumes:
   database:
   storage:
   asr_models:
+  vision_models:

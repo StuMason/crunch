@@ -1,0 +1,12 @@
+# Florence-2-base via transformers. torch (CPU build) is installed separately in the
+# Dockerfile from the CPU wheel index to avoid pulling the huge CUDA stack.
+#
+# transformers is PINNED: Florence-2's bundled remote code breaks on 4.50+ ("Unrecognized
+# configuration class" / missing `_supports_sdpa`). 4.49.0 is the last known-good line.
+transformers==4.49.0
+timm>=1.0          # Florence-2 remote code imports timm (vision backbone)
+einops>=0.8        # ...and einops
+pillow>=10.0
+fastapi>=0.110
+uvicorn[standard]>=0.29
+python-multipart>=0.0.9
