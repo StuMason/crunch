@@ -129,6 +129,15 @@ return [
             'kind' => 'sidecar',
             'model' => env('CRUNCH_VISION_MODEL', 'microsoft/Florence-2-base'),
         ],
+        // OCR and object detection are the same warm Florence-2 model, different task tokens.
+        'ocr' => [
+            'kind' => 'sidecar',
+            'model' => env('CRUNCH_VISION_MODEL', 'microsoft/Florence-2-base'),
+        ],
+        'detect' => [
+            'kind' => 'sidecar',
+            'model' => env('CRUNCH_VISION_MODEL', 'microsoft/Florence-2-base'),
+        ],
         'transcribe' => [
             // Verbatim STT runs in the Python ASR sidecar (asr-sidecar/), NOT the
             // PHP/ONNX pipeline: CrisperWhisper keeps fillers + word timestamps, which

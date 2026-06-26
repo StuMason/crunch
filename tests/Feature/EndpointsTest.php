@@ -5,6 +5,8 @@ declare(strict_types=1);
 use App\Actions\Inference\Caption;
 use App\Actions\Inference\ClassifyImage;
 use App\Actions\Inference\ClassifyText;
+use App\Actions\Inference\DetectObjects;
+use App\Actions\Inference\Ocr;
 use App\Actions\Inference\Rerank;
 use App\Actions\Inference\Transcribe;
 use App\Jobs\TranscribeJob;
@@ -104,6 +106,59 @@ it('captions an image', function () {
         ->postJson('/caption', ['image' => base64_encode('fake-img')])
         ->assertOk()
         ->assertJsonPath('caption', 'a cat on a mat');
+});
+
+it('reads text from an image (OCR)', function () {
+    $this->mock(Ocr::class)->shouldReceive('handle')->andReturn('STOP');
+
+    $this->withToken('test-key')
+        ->postJson('/ocr', ['image' => base64_encode('fake-img')])
+        ->assertOk()
+        ->assertJsonPath('text', 'STOP');
+});
+
+it('detects objects in an image', function () {
+    $this->mock(DetectObjects::class)->shouldReceive('handle')
+        ->andReturn([['label' => 'dog', 'box' => [1.5, 2.5, 3.5, 4.5]]]);
+
+    $this->withToken('test-key')
+        ->postJson('/detect', ['image' => base64_encode('fake-img')])
+        ->assertOk()
+        ->assertJsonPath('objects.0.label', 'dog')
+        ->assertJsonPath('objects.0.box.2', 3.5);
+});
+
+it('zips Florence-2 detection output into objects (sidecar)', function () {
+    config(['crunch.vision.url' => 'http://vision:9000']);
+
+    Http::fake(['vision:9000/caption' => Http::response([
+        'model' => 'microsoft/Florence-2-base',
+        'task' => '<OD>',
+        'result' => ['bboxes' => [[10, 20, 30, 40], [5, 6, 7, 8]], 'labels' => ['dog', 'ball']],
+    ], 200)]);
+
+    $img = tempnam(sys_get_temp_dir(), 'od');
+    file_put_contents($img, 'x');
+
+    $objects = app(DetectObjects::class)->handle($img);
+
+    expect($objects)->toHaveCount(2);
+    expect($objects[0])->toBe(['label' => 'dog', 'box' => [10.0, 20.0, 30.0, 40.0]]);
+});
+
+it('extracts and trims OCR text (sidecar)', function () {
+    config(['crunch.vision.url' => 'http://vision:9000']);
+
+    Http::fake(['vision:9000/caption' => Http::response([
+        'model' => 'microsoft/Florence-2-base',
+        'task' => '<OCR>',
+        'result' => '  hello world  ',
+    ], 200)]);
+
+    $img = tempnam(sys_get_temp_dir(), 'ocr');
+    file_put_contents($img, 'x');
+
+    expect(app(Ocr::class)->handle($img))->toBe('hello world');
 });
 
 it('captions an image via the vision sidecar (Florence-2)', function () {

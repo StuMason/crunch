@@ -26,9 +26,11 @@ Route::middleware(CrunchAuth::class)->group(function () {
     Route::post('/sentiment', [TextController::class, 'sentiment']);
     Route::post('/moderate', [TextController::class, 'moderate']);
 
-    // Image: zero-shot classification + captioning
+    // Image: zero-shot classification + Florence-2 captioning, OCR, object detection
     Route::post('/classify-image', [ImageController::class, 'classify']);
     Route::post('/caption', [ImageController::class, 'caption']);
+    Route::post('/ocr', [ImageController::class, 'ocr']);
+    Route::post('/detect', [ImageController::class, 'detect']);
 
     // Audio: async transcription (queue) + job polling
     Route::post('/transcribe', [TranscriptionController::class, 'transcribe']);
