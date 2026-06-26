@@ -6,6 +6,8 @@ namespace App\Http\Controllers\Api;
 
 use App\Actions\Inference\Caption;
 use App\Actions\Inference\ClassifyImage;
+use App\Actions\Inference\DetectObjects;
+use App\Actions\Inference\Ocr;
 use App\Http\Controllers\Controller;
 use App\Support\MediaResolver;
 use Illuminate\Http\JsonResponse;
@@ -56,30 +58,32 @@ class ImageController extends Controller
     /**
      * Caption an image (it writes the description)
      *
-     * Open-ended: crunch looks at the picture and writes a sentence describing it — you
-     * don't supply any options. Runs Florence-2-base in the vision sidecar, so captions
-     * are detailed and accurate (it'll often name the subject, setting and action). CPU
-     * inference takes a few seconds.
+     * Open-ended: crunch looks at the picture and writes a sentence describing it. Runs
+     * Florence-2-base in the vision sidecar, so captions are detailed and accurate (it'll
+     * often name the subject, setting and action). CPU inference takes a few seconds.
      *
-     * **Send the image one of three ways** (same as classify):
-     * - `application/json` with `"url"`: `{"url": "https://…/cat.jpg"}`
+     * **Send the image one of three ways** (same as classify), plus an optional `detail`:
+     * - `application/json` with `"url"`: `{"url": "https://…/cat.jpg", "detail": "detailed"}`
      * - `application/json` with `"image"`: base64 string — `{"image": "<base64>"}`
-     * - `multipart/form-data`: `curl -F image=@cat.jpg`
+     * - `multipart/form-data`: `curl -F image=@cat.jpg -F detail=more`
+     *
+     * `detail` is `normal` (default, one sentence), `detailed`, or `more` (a full paragraph).
      *
      * **Get back:** `{ "caption": "A grey cat curled up asleep on a knitted blanket." }`.
      */
     public function caption(Request $request, Caption $caption): JsonResponse
     {
-        $request->validate([
+        $validated = $request->validate([
             'url' => ['sometimes', 'string'],   // public image URL
             'image' => ['sometimes'],           // base64 string or uploaded file
+            'detail' => ['sometimes', 'in:normal,detailed,more'],
         ]);
 
         // libvips reads a local file (it can't fetch URLs), so download/persist first.
         [$image, $isTemp] = MediaResolver::resolve($request, 'image', mustBeLocal: true);
 
         try {
-            $text = $caption->handle($image);
+            $text = $caption->handle($image, $validated['detail'] ?? 'normal');
         } finally {
             if ($isTemp) {
                 @unlink($image);
@@ -89,6 +93,76 @@ class ImageController extends Controller
         return response()->json([
             'model' => config('crunch.models.caption.model'),
             'caption' => $text,
+        ]);
+    }
+
+    /**
+     * Read the text in an image (OCR)
+     *
+     * Pulls any readable text out of the picture — signs, screenshots, receipts,
+     * handwriting — using Florence-2 in the vision sidecar. CPU inference takes a few
+     * seconds.
+     *
+     * **Send the image** as a `url`, a base64 `image` string, or a multipart upload
+     * (same as the other image endpoints).
+     *
+     * **Get back:** `{ "text": "STOP" }` (empty string if there's no text).
+     */
+    public function ocr(Request $request, Ocr $ocr): JsonResponse
+    {
+        $request->validate([
+            'url' => ['sometimes', 'string'],
+            'image' => ['sometimes'],
+        ]);
+
+        [$image, $isTemp] = MediaResolver::resolve($request, 'image', mustBeLocal: true);
+
+        try {
+            $text = $ocr->handle($image);
+        } finally {
+            if ($isTemp) {
+                @unlink($image);
+            }
+        }
+
+        return response()->json([
+            'model' => config('crunch.models.ocr.model'),
+            'text' => $text,
+        ]);
+    }
+
+    /**
+     * Detect objects in an image
+     *
+     * Finds the objects in a picture and where they are, using Florence-2 in the vision
+     * sidecar. Unlike `/classify-image` you don't supply labels — it names what it finds.
+     * CPU inference takes a few seconds.
+     *
+     * **Send the image** as a `url`, a base64 `image` string, or a multipart upload.
+     *
+     * **Get back:** `objects`, each with a `label` and a `box` — `[x1, y1, x2, y2]` in
+     * pixel coordinates of the image you sent.
+     */
+    public function detect(Request $request, DetectObjects $detect): JsonResponse
+    {
+        $request->validate([
+            'url' => ['sometimes', 'string'],
+            'image' => ['sometimes'],
+        ]);
+
+        [$image, $isTemp] = MediaResolver::resolve($request, 'image', mustBeLocal: true);
+
+        try {
+            $objects = $detect->handle($image);
+        } finally {
+            if ($isTemp) {
+                @unlink($image);
+            }
+        }
+
+        return response()->json([
+            'model' => config('crunch.models.detect.model'),
+            'objects' => $objects,
         ]);
     }
 }

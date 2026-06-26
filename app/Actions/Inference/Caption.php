@@ -14,8 +14,11 @@ class Caption
 {
     public function __construct(private readonly VisionClient $vision) {}
 
-    public function handle(string $image): string
+    /**
+     * @param  string  $detail  Caption verbosity: `normal`, `detailed`, or `more`.
+     */
+    public function handle(string $image, string $detail = 'normal'): string
     {
-        return trim($this->vision->caption($image)['caption']);
+        return trim($this->vision->caption($image, $detail)['caption']);
     }
 }
