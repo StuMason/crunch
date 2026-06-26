@@ -1,10 +1,11 @@
 # crunch — multi-service stack for Coolify (docker-compose deployment).
 #
 #   app : FrankenPHP/Octane + the PHP/ONNX core (web + in-process queue worker).
-#   asr : Python verbatim-STT sidecar (CrisperWhisper). Internal only — never
-#         published; the app reaches it by service name over the compose network.
+#   asr : Whisper large-v3-turbo sidecar (faster-whisper). Internal only.
 #
-# Coolify provides the public proxy/domain to `app` on port 8000.
+# Traefik routing for the public domain is declared explicitly on `app` below —
+# Coolify's SERVICE_FQDN magic doesn't wire it for compose deploys, so we attach the
+# external `coolify` proxy network and set the router/service labels ourselves.
 services:
   app:
     build:
@@ -14,19 +15,32 @@ services:
     depends_on:
       - asr
     environment:
-      # Coolify magic: bind the app's domain (crunch.stumason.dev) to this service:port.
-      SERVICE_FQDN_APP_8000: https://crunch.stumason.dev
-      # Point the PHP transcribe path at the sidecar (matches config/crunch.php `asr`).
       CRUNCH_ASR_URL: http://asr:9000
       CRUNCH_ASR_TIMEOUT: "600"
-      # Everything else (APP_KEY, CRUNCH_API_KEY, DB_*, etc.) is supplied by Coolify's
-      # environment for this service.
+      # APP_KEY, CRUNCH_API_KEY, DB_*, etc. are injected by Coolify's app env.
     volumes:
       - models:/data/models       # ONNX model cache (transformers-php)
       - database:/app/database     # SQLite
       - storage:/app/storage       # framework + app storage (incl. resolved audio temp)
-    ports:
-      - "8000"                     # Coolify's proxy publishes this
+    networks:
+      - default                    # talk to `asr` by service name
+      - coolify                    # reachable by the Traefik proxy
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=coolify
+      - traefik.http.middlewares.gzip.compress=true
+      - traefik.http.middlewares.redirect-to-https.redirectscheme.scheme=https
+      - traefik.http.routers.crunch-http.entryPoints=http
+      - traefik.http.routers.crunch-http.rule=Host(`crunch.stumason.dev`)
+      - traefik.http.routers.crunch-http.middlewares=redirect-to-https
+      - traefik.http.routers.crunch-http.service=crunch
+      - traefik.http.routers.crunch-https.entryPoints=https
+      - traefik.http.routers.crunch-https.rule=Host(`crunch.stumason.dev`)
+      - traefik.http.routers.crunch-https.tls=true
+      - traefik.http.routers.crunch-https.tls.certresolver=letsencrypt
+      - traefik.http.routers.crunch-https.middlewares=gzip
+      - traefik.http.routers.crunch-https.service=crunch
+      - traefik.http.services.crunch.loadbalancer.server.port=8000
 
   asr:
     build:
@@ -34,13 +48,17 @@ services:
       dockerfile: Dockerfile
     restart: unless-stopped
     environment:
-      ASR_MODEL: nyrahealth/faster_CrisperWhisper
-      ASR_DEVICE: cpu
+      ASR_MODEL: large-v3-turbo    # verbatim CrisperWhisper needs a GPU; turbo is the CPU answer
       ASR_COMPUTE_TYPE: int8
       HF_HOME: /models
     volumes:
-      - asr_models:/models         # HF cache — persists the ~1.5GB CrisperWhisper download
-    # No `ports:` — internal to the stack only. Reached at http://asr:9000.
+      - asr_models:/models         # HF cache — persists the model download
+    networks:
+      - default                    # internal only; never exposed to Traefik
+
+networks:
+  coolify:
+    external: true
 
 volumes:
   models:
