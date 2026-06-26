@@ -16,6 +16,6 @@ class Caption
 
     public function handle(string $image): string
     {
-        return trim($this->vision->caption($image)['caption'] ?? '');
+        return trim($this->vision->caption($image)['caption']);
     }
 }

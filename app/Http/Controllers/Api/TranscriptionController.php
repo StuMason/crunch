@@ -92,14 +92,39 @@ class TranscriptionController extends Controller
     }
 
     /**
-     * The transcription payload once the job has completed (null until then). Sourced
-     * through this typed accessor — rather than the untyped `result` JSON column inline —
-     * so the OpenAPI schema reflects the real `verbose_json` shape instead of a bare object.
+     * The transcription payload once the job has completed (null until then). The `result`
+     * column is an untyped JSON array, so we normalise it into the OpenAI `verbose_json` shape
+     * here — both to harden against a malformed row and so the OpenAPI schema reflects the real
+     * structure instead of a bare object.
      *
      * @return array{task: string, language: string|null, duration: float|null, text: string, words: list<array{word: string, start: float, end: float}>}|null
      */
     private function result(InferenceJob $job): ?array
     {
-        return $job->result;
+        $result = $job->result;
+
+        if ($result === null) {
+            return null;
+        }
+
+        $words = [];
+        foreach ((array) ($result['words'] ?? []) as $word) {
+            if (! is_array($word)) {
+                continue;
+            }
+            $words[] = [
+                'word' => (string) ($word['word'] ?? ''),
+                'start' => (float) ($word['start'] ?? 0),
+                'end' => (float) ($word['end'] ?? 0),
+            ];
+        }
+
+        return [
+            'task' => (string) ($result['task'] ?? 'transcribe'),
+            'language' => isset($result['language']) ? (string) $result['language'] : null,
+            'duration' => isset($result['duration']) ? (float) $result['duration'] : null,
+            'text' => (string) ($result['text'] ?? ''),
+            'words' => $words,
+        ];
     }
 }

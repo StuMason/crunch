@@ -26,10 +26,15 @@ class AsrClient
     {
         $base = rtrim((string) config('crunch.asr.url'), '/');
 
+        $contents = file_get_contents($audioPath);
+        if ($contents === false) {
+            throw new RuntimeException("Cannot read audio file: {$audioPath}");
+        }
+
         try {
             $response = Http::timeout((int) config('crunch.asr.timeout', 600))
                 ->asMultipart()
-                ->attach('audio', file_get_contents($audioPath), basename($audioPath))
+                ->attach('audio', $contents, basename($audioPath))
                 ->post("{$base}/transcribe");
         } catch (ConnectionException $e) {
             throw new RuntimeException("ASR sidecar unreachable at {$base}: {$e->getMessage()}", previous: $e);

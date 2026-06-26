@@ -27,10 +27,15 @@ class VisionClient
     {
         $base = rtrim((string) config('crunch.vision.url'), '/');
 
+        $contents = file_get_contents($imagePath);
+        if ($contents === false) {
+            throw new RuntimeException("Cannot read image file: {$imagePath}");
+        }
+
         try {
             $response = Http::timeout((int) config('crunch.vision.timeout', 120))
                 ->asMultipart()
-                ->attach('image', file_get_contents($imagePath), basename($imagePath))
+                ->attach('image', $contents, basename($imagePath))
                 ->post("{$base}/caption", ['detail' => $detail]);
         } catch (ConnectionException $e) {
             throw new RuntimeException("Vision sidecar unreachable at {$base}: {$e->getMessage()}", previous: $e);

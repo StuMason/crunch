@@ -111,7 +111,7 @@ return [
             'task' => 'text-classification',
             'model' => 'KoalaAI/Text-Moderation',
             'quantized' => false,
-            'top_k' => null,
+            'top_k' => -1, // -1 = return ALL categories (not just the top one) for a full moderation breakdown
         ],
         'classify-image' => [
             'kind' => 'pipeline',
