@@ -80,7 +80,11 @@ return [
         // --- wired in subsequent slices (verified working in the spike) ---
         'rerank' => [
             'kind' => 'cross-encoder',
-            'model' => 'Xenova/ms-marco-MiniLM-L-6-v2',
+            // Bumped L-6 -> L-12 (same ms-marco BERT family): 2x layers, stronger relevance at
+            // effectively no latency cost (~22ms warm, same as L-6). NOTE: modern rerankers
+            // (bge/gte) are XLM-RoBERTa, which transformers-php's sequence-classification path
+            // does NOT support, so the BERT-family ms-marco models are the in-core ceiling here.
+            'model' => 'Xenova/ms-marco-MiniLM-L-12-v2',
         ],
         'sentiment' => [
             'kind' => 'pipeline',
@@ -98,7 +102,10 @@ return [
         'classify-image' => [
             'kind' => 'pipeline',
             'task' => 'zero-shot-image-classification',
-            'model' => 'Xenova/clip-vit-base-patch32',
+            // Bumped from clip-vit-base-patch32 (~150M): the large/14 variant has much stronger
+            // zero-shot accuracy (B/32 mis-ranked an obvious dog photo below "landscape"). Same
+            // pipeline + Xenova ONNX, just bigger (~1.7GB, ~500-700ms warm) — fits the headroom.
+            'model' => 'Xenova/clip-vit-large-patch14',
         ],
         'caption' => [
             // capped at vit-gpt2 in transformers-php (BLIP/Florence-2 unsupported)
