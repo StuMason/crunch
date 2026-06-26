@@ -25,7 +25,9 @@ class TranscriptionController extends Controller
      * - `application/json` with `"audio"`: the file as a base64 string — `{"audio": "<base64>"}`
      * - `multipart/form-data`: upload the file — `curl -F audio=@clip.wav`
      *
-     * **Get back:** `202 Accepted` with a job — note its `id` and poll it.
+     * **Get back:** `202 Accepted` with a job — note its `id` and poll it. When the job
+     * completes, `result` holds `text` (the full transcript), `words` (each spoken word
+     * with `start`/`end` timestamps in seconds), `duration` and detected `language`.
      */
     public function transcribe(Request $request): JsonResponse
     {
@@ -61,7 +63,17 @@ class TranscriptionController extends Controller
     }
 
     /**
-     * @return array<string, mixed>
+     * @return array{
+     *     id: string,
+     *     type: string,
+     *     status: string,
+     *     model: string|null,
+     *     result: array{text: string, duration: float|null, language: string|null, words: list<array{w: string, start: float, end: float}>}|null,
+     *     error: string|null,
+     *     poll_url: string,
+     *     created_at: string|null,
+     *     completed_at: string|null
+     * }
      */
     private function present(InferenceJob $job): array
     {

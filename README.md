@@ -12,7 +12,7 @@
 
 > A self-hosted, OpenAI-compatible inference API for everything that *isn't* a chatbot —
 > **embeddings, reranking, classification, moderation, image labelling, captioning and speech-to-text** —
-> in a single Laravel container, on your own compute, at near-zero marginal cost.
+> on a single box you own, at near-zero marginal cost.
 
 🌐 **Live:** [crunch.stumason.dev](https://crunch.stumason.dev) · 📖 **Interactive docs:** [/docs/api](https://crunch.stumason.dev/docs/api)
 
@@ -26,10 +26,11 @@ The big AI APIs are built for *generating* — chat, completions, images. But mo
 the boring, brilliant **"one-shot" models** underneath: turn text into vectors, rank search
 results, score sentiment, flag bad content, label an image, transcribe audio.
 
-**crunch** is all of those behind **one API key, one base URL, one container** — running on
-hardware you already own. No Python, no GPU, no per-call meter, no data leaving your box. Models
-stay **warm in memory** ([Laravel Octane](https://laravel.com/docs/octane) + FrankenPHP), so
-calls come back in tens of milliseconds.
+**crunch** is all of those behind **one API key, one base URL** — running on hardware you
+already own. No GPU, no per-call meter, no data leaving your box. The encoder core is pure
+PHP/ONNX (no Python) with models **warm in memory** ([Laravel Octane](https://laravel.com/docs/octane)
++ FrankenPHP), so calls come back in tens of milliseconds; speech-to-text runs in a small
+companion Python sidecar.
 
 It's the lean alternative to stitching together OpenAI + Cohere + Deepgram + a moderation
 vendor — and to babysitting a pile of separate model servers.
@@ -44,7 +45,7 @@ vendor — and to babysitting a pile of separate model servers.
 | `POST /moderate` | Flag harmful content (multi-category) | KoalaAI Text-Moderation |
 | `POST /classify-image` | Score an image against your own labels (zero-shot) | CLIP |
 | `POST /caption` | Describe an image in words | vit-gpt2 |
-| `POST /transcribe` → `GET /jobs/{id}` | Speech → text (async) | distil-whisper |
+| `POST /transcribe` → `GET /jobs/{id}` | Speech → text + word timestamps (async) | Whisper large-v3-turbo (Python sidecar) |
 
 Every model is a **one-line swap** in `config/crunch.php`.
 
@@ -52,7 +53,7 @@ Every model is a **one-line swap** in `config/crunch.php`.
 
 - **🔌 OpenAI-compatible** — point any OpenAI SDK at the base URL and embeddings just work.
 - **⚡ Warm & fast** — Octane keeps models loaded; no cold reload per request.
-- **📦 One container** — SQLite + database queue. No Postgres, no Redis, no Python, no GPU.
+- **📦 Lean stack** — SQLite + database queue; PHP/ONNX core container + a Python speech-to-text sidecar. No Postgres, no Redis, no GPU.
 - **🔐 Yours** — self-hosted; your data never leaves your infrastructure.
 - **🎛️ Batteries included** — API tokens, per-token rate limits + monthly quotas, usage
   dashboard, and auto-generated interactive docs, all built in.
@@ -97,21 +98,30 @@ Full, interactive reference (with "Try it"): **[/docs/api](https://crunch.stumas
 
 ```
                  ┌─────────────────────────────────────────┐
-  HTTP  ──────▶  │  Laravel + Octane (FrankenPHP)           │
+  HTTP  ──────▶  │  app: Laravel + Octane (FrankenPHP)      │
   (Bearer)       │   • CrunchAuth: tokens · quotas · usage  │
                  │   • InferenceManager: warm models 🔥     │
                  │   • transformers-php (ONNX Runtime / FFI)│
                  │   • SQLite (WAL) · database queue        │
+                 └──────────────────┬──────────────────────┘
+                                    │ HTTP (internal, /transcribe only)
+                                    ▼
+                 ┌─────────────────────────────────────────┐
+                 │  asr: Python speech-to-text sidecar      │
+                 │   • faster-whisper · large-v3-turbo      │
                  └─────────────────────────────────────────┘
 ```
 
-Inference runs in-process via [transformers-php](https://github.com/CodeWithKyrian/transformers-php).
-Heavy work (transcription) runs on a queue worker in the same container; clients poll `/jobs/{id}`.
+Encoder inference runs in-process via [transformers-php](https://github.com/CodeWithKyrian/transformers-php).
+Transcription runs async: a queue worker hands the audio to the `asr` sidecar (faster-whisper),
+and clients poll `/jobs/{id}`. (Verbatim models like CrisperWhisper need a GPU; turbo is the
+CPU-friendly choice — edator pairs the word timestamps with its own onset detection for fillers.)
 
 ## Self-hosting
 
-Deploys from this repo's `Dockerfile` (FrankenPHP base + FFI/ONNX/audio libs; Vite builds the UI).
-A persistent volume at `/data` holds the model cache and the SQLite DB.
+Deploys from this repo's `docker-compose.yaml` — the `app` service (FrankenPHP base + FFI/ONNX/audio
+libs; Vite builds the UI) plus the `asr` Python sidecar. Persistent volumes hold the model caches
+and the SQLite DB.
 
 ```bash
 docker build -t crunch .
