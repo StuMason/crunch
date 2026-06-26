@@ -1,0 +1,7 @@
+# Pinned loosely (^-style) — let pip take latest compatible. faster-whisper pulls
+# ctranslate2 (CTranslate2 runtime) and av (PyAV, bundles ffmpeg for decoding any
+# input format, so no system ffmpeg needed).
+faster-whisper>=1.0
+fastapi>=0.110
+uvicorn[standard]>=0.29
+python-multipart>=0.0.9

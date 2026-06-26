@@ -31,3 +31,8 @@ yarn-error.log
 **/caddy
 frankenphp
 frankenphp-worker.php
+
+# Local ASR/ONNX model caches (never commit — multi-GB downloads)
+/onnx-community/
+/Xenova/
+storage/app/models/

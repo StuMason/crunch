@@ -45,11 +45,19 @@ class TranscribeJob implements ShouldQueue
 
         // Do NOT delete the audio here on failure: with tries > 1 the file must survive
         // between attempts. Cleanup happens on success below and in failed() (terminal).
-        $text = $transcribe->handle($this->audioPath);
+        $result = $transcribe->handle($this->audioPath);
 
         $job->update([
             'status' => InferenceJob::STATUS_COMPLETED,
-            'result' => ['text' => $text],
+            // Record the model the sidecar actually used (it owns the model choice).
+            'model' => $result['model'] ?? $job->model,
+            // Full verbatim payload: text + word-level timestamps, nothing stripped.
+            'result' => [
+                'text' => $result['text'] ?? '',
+                'duration' => $result['duration'] ?? null,
+                'language' => $result['language'] ?? null,
+                'words' => $result['words'] ?? [],
+            ],
             'completed_at' => now(),
         ]);
 
