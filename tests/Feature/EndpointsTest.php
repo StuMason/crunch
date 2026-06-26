@@ -68,6 +68,25 @@ it('does not flag safe content', function () {
         ->assertJsonPath('results.0.categories.H', false);
 });
 
+it('returns all categories and forces the winning one true when flagged below 0.5', function () {
+    // Low-confidence violence: top class isn't OK, but no score crosses 0.5.
+    $this->mock(ClassifyText::class)->shouldReceive('handle')
+        ->with('moderate', 'borderline')
+        ->andReturn([
+            ['label' => 'V', 'score' => 0.25],
+            ['label' => 'OK', 'score' => 0.2],
+            ['label' => 'H', 'score' => 0.1],
+        ]);
+
+    $this->withToken('test-key')
+        ->postJson('/moderate', ['inputs' => 'borderline'])
+        ->assertOk()
+        ->assertJsonPath('results.0.flagged', true)
+        ->assertJsonPath('results.0.categories.V', true)   // winner forced true for consistency
+        ->assertJsonPath('results.0.categories.H', false)
+        ->assertJsonPath('results.0.category_scores.H', 0.1); // all categories present
+});
+
 it('classifies an image against labels', function () {
     $this->mock(ClassifyImage::class)->shouldReceive('handle')
         ->andReturn([['label' => 'a cat', 'score' => 0.97]]);

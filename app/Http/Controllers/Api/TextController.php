@@ -101,26 +101,30 @@ class TextController extends Controller
     private function moderationResult(array $scores): array
     {
         $top = $scores[0]['label'] ?? 'OK';
+        $flagged = $top !== 'OK';
 
         return [
-            'flagged' => $top !== 'OK',
-            'categories' => $this->categoryFlags($scores),
+            'flagged' => $flagged,
+            'categories' => $this->categoryFlags($scores, $flagged ? $top : null),
             'category_scores' => $this->categoryScores($scores),
         ];
     }
 
     /**
-     * Per-category booleans (score thresholded at 0.5). Split out so the open-map type
-     * lands in the OpenAPI schema rather than degrading to a scalar.
+     * Per-category booleans. A category is true if its score crosses 0.5, and the winning
+     * harmful category (`$flaggedLabel`) is always forced true so `flagged` and `categories`
+     * stay consistent even on a low-confidence prediction. KoalaAI is single-label (softmax),
+     * so in practice only the winner trips. Split out so the open-map type lands in the
+     * OpenAPI schema rather than degrading to a scalar.
      *
      * @param  list<array{label: string, score: float}>  $scores
      * @return array<string, bool>
      */
-    private function categoryFlags(array $scores): array
+    private function categoryFlags(array $scores, ?string $flaggedLabel): array
     {
         $map = [];
         foreach ($scores as $row) {
-            $map[$row['label']] = $row['score'] >= 0.5;
+            $map[$row['label']] = $row['score'] >= 0.5 || $row['label'] === $flaggedLabel;
         }
 
         return $map;

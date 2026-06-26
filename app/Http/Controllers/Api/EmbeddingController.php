@@ -77,7 +77,7 @@ class EmbeddingController extends Controller
      */
     private function floatVector(array $vector): array
     {
-        return array_values($vector);
+        return $vector;
     }
 
     /**
