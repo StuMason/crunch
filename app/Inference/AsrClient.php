@@ -20,7 +20,7 @@ class AsrClient
     /**
      * Transcribe a local audio/video file via the sidecar.
      *
-     * @return array{model: string, text: string, duration: float, language: string, words: list<array{w: string, start: float, end: float}>}
+     * @return array{task: string, language: string, duration: float, text: string, words: list<array{word: string, start: float, end: float}>, model: string, infer_secs: float}
      */
     public function transcribe(string $audioPath): array
     {
@@ -41,7 +41,7 @@ class AsrClient
             throw new RuntimeException("ASR sidecar error ({$response->status()}): {$detail}");
         }
 
-        /** @var array{model: string, text: string, duration: float, language: string, words: list<array{w: string, start: float, end: float}>} $json */
+        /** @var array{task: string, language: string, duration: float, text: string, words: list<array{word: string, start: float, end: float}>, model: string, infer_secs: float} $json */
         $json = $response->json();
 
         return $json;

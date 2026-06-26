@@ -39,7 +39,7 @@ vendor — and to babysitting a pile of separate model servers.
 
 | Endpoint | What it does | Model |
 | --- | --- | --- |
-| `POST /v1/embeddings` · `/embed` | Text → vector (semantic search, RAG, similarity) | Qwen3-Embedding-0.6B (1024-d) |
+| `POST /v1/embeddings` | Text → vector (semantic search, RAG, similarity) | Qwen3-Embedding-0.6B (1024-d) |
 | `POST /rerank` | Re-order candidates by true relevance to a query | ms-marco-MiniLM-L-12 |
 | `POST /sentiment` | Emotion / sentiment across 28 categories | go_emotions |
 | `POST /moderate` | Flag harmful content (multi-category) | KoalaAI Text-Moderation |
@@ -64,10 +64,10 @@ Every model is a **one-line swap** in `config/crunch.php`.
 # 1. Create a token in the dashboard (/dashboard), then:
 KEY="crunch_..."
 
-# Embeddings
-curl -sX POST https://crunch.stumason.dev/embed \
+# Embeddings (OpenAI-compatible)
+curl -sX POST https://crunch.stumason.dev/v1/embeddings \
   -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' \
-  -d '{"inputs":["hello world","goodbye world"]}'
+  -d '{"input":["hello world","goodbye world"]}'
 
 # Rerank
 curl -sX POST https://crunch.stumason.dev/rerank \

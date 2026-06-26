@@ -6,9 +6,10 @@ produces broken text). On this no-GPU box the right tool is standard Whisper tur
 clean, fast, accurate, with word-level timestamps. edator pairs this with its own
 envelope.js (RMS onsets) to find filler/dead-air cut points the transcript omits.
 
-Contract (owned by us, shaped for edator):
+Contract: OpenAI Whisper `verbose_json` (so a stock Whisper client can read it), plus a
+couple of additive crunch fields (`model`, `infer_secs`):
     POST /transcribe (multipart audio) ->
-      { model, text, duration, infer_secs, language, words: [ { w, start, end }, ... ] }
+      { task, language, duration, text, words: [ { word, start, end }, ... ], model, infer_secs }
 """
 
 from __future__ import annotations
@@ -62,16 +63,17 @@ async def transcribe(audio: UploadFile = File(...)) -> dict:
         for seg in segments:
             text_parts.append(seg.text)
             for w in (seg.words or []):
-                words.append({"w": w.word.strip(), "start": round(w.start, 3), "end": round(w.end, 3)})
+                words.append({"word": w.word.strip(), "start": round(w.start, 3), "end": round(w.end, 3)})
         infer = time.time() - started
 
         return {
-            "model": MODEL,
-            "text": "".join(text_parts).strip(),
-            "duration": round(info.duration, 3),
+            "task": "transcribe",
             "language": info.language,
-            "infer_secs": round(infer, 2),
+            "duration": round(info.duration, 3),
+            "text": "".join(text_parts).strip(),
             "words": words,
+            "model": MODEL,
+            "infer_secs": round(infer, 2),
         }
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"transcription failed: {exc}") from exc

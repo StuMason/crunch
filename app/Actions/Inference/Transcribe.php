@@ -17,7 +17,7 @@ class Transcribe
     public function __construct(private readonly AsrClient $asr) {}
 
     /**
-     * @return array{model: string, text: string, duration: float, language: string, words: list<array{w: string, start: float, end: float}>}
+     * @return array{task: string, language: string, duration: float, text: string, words: list<array{word: string, start: float, end: float}>, model: string, infer_secs: float}
      */
     public function handle(string $audioPath): array
     {

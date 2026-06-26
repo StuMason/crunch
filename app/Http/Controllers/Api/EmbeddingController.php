@@ -37,44 +37,47 @@ class EmbeddingController extends Controller
         ]);
 
         $texts = $this->normaliseTexts($validated['input']);
-        $vectors = $embed->handle($texts);
-
-        $data = [];
-        foreach ($vectors as $index => $vector) {
-            $data[] = [
-                'object' => 'embedding',
-                'index' => $index,
-                'embedding' => $vector,
-            ];
-        }
 
         return response()->json([
             'object' => 'list',
-            'data' => $data,
+            'data' => $this->toEmbeddingData($embed->handle($texts)),
             'model' => config('crunch.models.embed.model'),
             'usage' => ['prompt_tokens' => 0, 'total_tokens' => 0],
         ]);
     }
 
     /**
-     * Embeddings (simple)
+     * Shape vectors into OpenAI embedding objects. Extracted (rather than inlined) so the
+     * precise item shape — `embedding` as a float list, `index` as an int — is carried in
+     * the return type and reflected accurately in the generated OpenAPI schema.
      *
-     * The same as `/v1/embeddings` but with a plainer shape — handy if you're not
-     * using an OpenAI SDK.
-     *
-     * **Send:** `inputs` — one string, or an array of strings.
-     * **Get back:** a bare list of vectors, one per input, in the same order.
+     * @param  list<list<float>>  $vectors
+     * @return list<array{object: string, index: int, embedding: list<float>}>
      */
-    public function embed(Request $request, Embed $embed): JsonResponse
+    private function toEmbeddingData(array $vectors): array
     {
-        $validated = $request->validate([
-            'inputs' => ['required', $this->stringOrArrayRule()],
-            'inputs.*' => ['string'],
-        ]);
+        $data = [];
+        foreach ($vectors as $index => $vector) {
+            $data[] = [
+                'object' => 'embedding',
+                'index' => (int) $index,
+                'embedding' => $this->floatVector($vector),
+            ];
+        }
 
-        $texts = $this->normaliseTexts($validated['inputs']);
+        return $data;
+    }
 
-        return response()->json($embed->handle($texts));
+    /**
+     * Identity pass over a vector — its only job is to carry the `list<float>` type so the
+     * embedding is documented as a number array (Scramble can't trace the loop value alone).
+     *
+     * @param  list<float>  $vector
+     * @return list<float>
+     */
+    private function floatVector(array $vector): array
+    {
+        return array_values($vector);
     }
 
     /**

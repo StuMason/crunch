@@ -20,7 +20,6 @@ use Illuminate\Support\Facades\Route;
 Route::middleware(CrunchAuth::class)->group(function () {
     // Embeddings
     Route::post('/v1/embeddings', [EmbeddingController::class, 'openai']);
-    Route::post('/embed', [EmbeddingController::class, 'embed']);
 
     // Text: rerank + classification
     Route::post('/rerank', [TextController::class, 'rerank']);

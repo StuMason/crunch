@@ -51,11 +51,13 @@ class TranscribeJob implements ShouldQueue
             'status' => InferenceJob::STATUS_COMPLETED,
             // Record the model the sidecar actually used (it owns the model choice).
             'model' => $result['model'] ?? $job->model,
-            // Full verbatim payload: text + word-level timestamps, nothing stripped.
+            // OpenAI Whisper verbose_json: task/language/duration/text + word-level
+            // timestamps, nothing stripped (verbatim — fillers stay in).
             'result' => [
-                'text' => $result['text'] ?? '',
-                'duration' => $result['duration'] ?? null,
+                'task' => $result['task'] ?? 'transcribe',
                 'language' => $result['language'] ?? null,
+                'duration' => $result['duration'] ?? null,
+                'text' => $result['text'] ?? '',
                 'words' => $result['words'] ?? [],
             ],
             'completed_at' => now(),

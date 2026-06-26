@@ -26,8 +26,9 @@ class TranscriptionController extends Controller
      * - `multipart/form-data`: upload the file — `curl -F audio=@clip.wav`
      *
      * **Get back:** `202 Accepted` with a job — note its `id` and poll it. When the job
-     * completes, `result` holds `text` (the full transcript), `words` (each spoken word
-     * with `start`/`end` timestamps in seconds), `duration` and detected `language`.
+     * completes, `result` is the OpenAI Whisper `verbose_json` shape: `text` (the full
+     * transcript), `words` (each spoken word with `start`/`end` timestamps in seconds —
+     * verbatim, fillers kept), `duration`, detected `language` and `task`.
      */
     public function transcribe(Request $request): JsonResponse
     {
@@ -68,7 +69,7 @@ class TranscriptionController extends Controller
      *     type: string,
      *     status: string,
      *     model: string|null,
-     *     result: array{text: string, duration: float|null, language: string|null, words: list<array{w: string, start: float, end: float}>}|null,
+     *     result: array{task: string, language: string|null, duration: float|null, text: string, words: list<array{word: string, start: float, end: float}>}|null,
      *     error: string|null,
      *     poll_url: string,
      *     created_at: string|null,
@@ -82,11 +83,23 @@ class TranscriptionController extends Controller
             'type' => $job->type,
             'status' => $job->status,
             'model' => $job->model,
-            'result' => $job->result,
+            'result' => $this->result($job),
             'error' => $job->error,
             'poll_url' => url("/jobs/{$job->uid}"),
             'created_at' => $job->created_at?->toIso8601String(),
             'completed_at' => $job->completed_at?->toIso8601String(),
         ];
+    }
+
+    /**
+     * The transcription payload once the job has completed (null until then). Sourced
+     * through this typed accessor — rather than the untyped `result` JSON column inline —
+     * so the OpenAPI schema reflects the real `verbose_json` shape instead of a bare object.
+     *
+     * @return array{task: string, language: string|null, duration: float|null, text: string, words: list<array{word: string, start: float, end: float}>}|null
+     */
+    private function result(InferenceJob $job): ?array
+    {
+        return $job->result;
     }
 }

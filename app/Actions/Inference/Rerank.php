@@ -18,8 +18,12 @@ class Rerank
     public function __construct(private readonly InferenceManager $inference) {}
 
     /**
+     * Score each candidate against the query and return them best-first in the Cohere
+     * rerank shape (the de-facto standard everyone copies): each result carries its
+     * original `index` and a `relevance_score`. The caller maps `index` back to its texts.
+     *
      * @param  list<string>  $texts
-     * @return list<array{index: int, score: float, text: string}>
+     * @return list<array{index: int, relevance_score: float}>
      */
     public function handle(string $query, array $texts, ?int $topK = null): array
     {
@@ -35,13 +39,12 @@ class Rerank
             $raw = is_array($logits[0]) ? $logits[0][0] : $logits[0];
 
             $scored[] = [
-                'index' => $index,
-                'score' => round($this->sigmoid((float) $raw), 6),
-                'text' => $text,
+                'index' => (int) $index,
+                'relevance_score' => round($this->sigmoid((float) $raw), 6),
             ];
         }
 
-        usort($scored, fn (array $a, array $b): int => $b['score'] <=> $a['score']);
+        usort($scored, fn (array $a, array $b): int => $b['relevance_score'] <=> $a['relevance_score']);
 
         return $topK !== null ? array_slice($scored, 0, $topK) : $scored;
     }

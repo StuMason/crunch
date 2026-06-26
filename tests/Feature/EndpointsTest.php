@@ -19,17 +19,17 @@ beforeEach(function () {
     config(['crunch.api_key' => 'test-key']);
 });
 
-it('reranks texts against a query', function () {
+it('reranks texts against a query (Cohere shape)', function () {
     $this->mock(Rerank::class)->shouldReceive('handle')->andReturn([
-        ['index' => 1, 'score' => 0.91, 'text' => 'relevant'],
-        ['index' => 0, 'score' => 0.02, 'text' => 'not'],
+        ['index' => 1, 'relevance_score' => 0.91],
+        ['index' => 0, 'relevance_score' => 0.02],
     ]);
 
     $this->withToken('test-key')
         ->postJson('/rerank', ['query' => 'q', 'texts' => ['not', 'relevant']])
         ->assertOk()
         ->assertJsonPath('results.0.index', 1)
-        ->assertJsonPath('results.0.score', 0.91);
+        ->assertJsonPath('results.0.relevance_score', 0.91);
 });
 
 it('classifies sentiment', function () {
@@ -43,15 +43,29 @@ it('classifies sentiment', function () {
         ->assertJsonPath('results.0.label', 'admiration');
 });
 
-it('moderates content', function () {
+it('moderates content (OpenAI moderations shape)', function () {
     $this->mock(ClassifyText::class)->shouldReceive('handle')
         ->with('moderate', 'bad words')
-        ->andReturn([['label' => 'H', 'score' => 0.95]]);
+        ->andReturn([['label' => 'H', 'score' => 0.95], ['label' => 'OK', 'score' => 0.05]]);
 
     $this->withToken('test-key')
         ->postJson('/moderate', ['inputs' => 'bad words'])
         ->assertOk()
-        ->assertJsonPath('results.0.label', 'H');
+        ->assertJsonPath('results.0.flagged', true)
+        ->assertJsonPath('results.0.categories.H', true)
+        ->assertJsonPath('results.0.category_scores.H', 0.95);
+});
+
+it('does not flag safe content', function () {
+    $this->mock(ClassifyText::class)->shouldReceive('handle')
+        ->with('moderate', 'have a lovely day')
+        ->andReturn([['label' => 'OK', 'score' => 0.99], ['label' => 'H', 'score' => 0.01]]);
+
+    $this->withToken('test-key')
+        ->postJson('/moderate', ['inputs' => 'have a lovely day'])
+        ->assertOk()
+        ->assertJsonPath('results.0.flagged', false)
+        ->assertJsonPath('results.0.categories.H', false);
 });
 
 it('classifies an image against labels', function () {
@@ -112,19 +126,22 @@ it('queues a transcription and returns a pollable job', function () {
 it('stores a verbatim transcript with word timestamps from the asr sidecar', function () {
     config(['crunch.asr.url' => 'http://asr:9000']);
 
-    // The sidecar's raw verbatim payload — fillers intact ("um"), word-level times.
+    // The sidecar's raw verbatim payload (OpenAI verbose_json) — fillers intact ("um"),
+    // word-level times under the standard `word` key.
     Http::fake([
         'asr:9000/transcribe' => Http::response([
-            'model' => 'nyrahealth/faster_CrisperWhisper',
-            'text' => 'So um I built a scraper.',
-            'duration' => 3.2,
+            'task' => 'transcribe',
             'language' => 'en',
+            'duration' => 3.2,
+            'text' => 'So um I built a scraper.',
             'words' => [
-                ['w' => 'So', 'start' => 0.0, 'end' => 0.2],
-                ['w' => 'um', 'start' => 0.24, 'end' => 0.5],
-                ['w' => 'I', 'start' => 0.62, 'end' => 0.7],
-                ['w' => 'built', 'start' => 0.7, 'end' => 1.0],
+                ['word' => 'So', 'start' => 0.0, 'end' => 0.2],
+                ['word' => 'um', 'start' => 0.24, 'end' => 0.5],
+                ['word' => 'I', 'start' => 0.62, 'end' => 0.7],
+                ['word' => 'built', 'start' => 0.7, 'end' => 1.0],
             ],
+            'model' => 'large-v3-turbo',
+            'infer_secs' => 1.1,
         ], 200),
     ]);
 
@@ -141,12 +158,13 @@ it('stores a verbatim transcript with word timestamps from the asr sidecar', fun
 
     $job->refresh();
     expect($job->status)->toBe(InferenceJob::STATUS_COMPLETED);
-    expect($job->model)->toBe('nyrahealth/faster_CrisperWhisper');
+    expect($job->model)->toBe('large-v3-turbo');
+    expect($job->result['task'])->toBe('transcribe');
     expect($job->result['text'])->toBe('So um I built a scraper.');
     expect($job->result['duration'])->toBe(3.2);
     expect($job->result['words'])->toHaveCount(4);
     // The filler must survive end-to-end — verbatim is the whole reason for the sidecar.
-    expect($job->result['words'][1]['w'])->toBe('um');
+    expect($job->result['words'][1]['word'])->toBe('um');
 
     Http::assertSent(fn ($request) => str_contains($request->url(), '/transcribe'));
 });

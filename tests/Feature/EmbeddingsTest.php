@@ -42,11 +42,12 @@ it('returns OpenAI-shaped embeddings for an array of inputs', function () {
         ->assertJsonPath('data.0.embedding', [0.1, 0.2, 0.3]);
 });
 
-it('returns a bare vector list on the native /embed endpoint', function () {
+it('returns a single embedding for a string input', function () {
     $this->withToken('test-key')
-        ->postJson('/embed', ['inputs' => 'just one'])
+        ->postJson('/v1/embeddings', ['input' => 'just one'])
         ->assertOk()
-        ->assertExactJson([[0.1, 0.2, 0.3]]);
+        ->assertJsonCount(1, 'data')
+        ->assertJsonPath('data.0.embedding', [0.1, 0.2, 0.3]);
 });
 
 it('validates that input is required', function () {
@@ -57,9 +58,9 @@ it('validates that input is required', function () {
 
 it('rejects a bare number instead of silently coercing it to a string', function () {
     $this->withToken('test-key')
-        ->postJson('/embed', ['inputs' => 12345])
+        ->postJson('/v1/embeddings', ['input' => 12345])
         ->assertStatus(422)
-        ->assertJsonValidationErrors('inputs');
+        ->assertJsonValidationErrors('input');
 });
 
 it('rejects a batch larger than the configured max', function () {

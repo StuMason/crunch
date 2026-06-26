@@ -18,7 +18,7 @@ it('authenticates an inference request with a Sanctum token', function () {
     $plain = $user->createToken('app')->plainTextToken;
 
     $this->withToken($plain)
-        ->postJson('/embed', ['inputs' => 'hello'])
+        ->postJson('/v1/embeddings', ['input' => 'hello'])
         ->assertOk();
 });
 
@@ -29,7 +29,7 @@ it('rejects a revoked token', function () {
     $token->accessToken->delete();
 
     $this->withToken($plain)
-        ->postJson('/embed', ['inputs' => 'hello'])
+        ->postJson('/v1/embeddings', ['input' => 'hello'])
         ->assertStatus(401);
 });
 
@@ -38,7 +38,7 @@ it('returns standard rate-limit headers on a token request', function () {
     $plain = $user->createToken('app')->plainTextToken;
 
     $this->withToken($plain)
-        ->postJson('/embed', ['inputs' => 'hello'])
+        ->postJson('/v1/embeddings', ['input' => 'hello'])
         ->assertOk()
         ->assertHeader('X-RateLimit-Limit')
         ->assertHeader('X-RateLimit-Remaining')
@@ -47,7 +47,7 @@ it('returns standard rate-limit headers on a token request', function () {
 
 it('still accepts the legacy master key', function () {
     $this->withToken('master-key')
-        ->postJson('/embed', ['inputs' => 'hello'])
+        ->postJson('/v1/embeddings', ['input' => 'hello'])
         ->assertOk();
 });
 
