@@ -35,4 +35,11 @@ return [
         ],
     ],
 
+    // Umami analytics — the tracking script only renders when a website id is set
+    // (production), so local/dev never phones home.
+    'umami' => [
+        'url' => env('UMAMI_URL', 'https://umami.stuartmason.co.uk'),
+        'website_id' => env('UMAMI_WEBSITE_ID'),
+    ],
+
 ];
