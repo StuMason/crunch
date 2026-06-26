@@ -1,8 +1,8 @@
-# crunch ASR sidecar — verbatim STT (CrisperWhisper via faster-whisper/CTranslate2).
-# Slim Python base; PyAV wheels carry their own ffmpeg, CTranslate2 needs libgomp.
+# crunch ASR sidecar — Whisper large-v3-turbo (faster-whisper / CTranslate2, CPU).
 FROM python:3.11-slim
 
-# libgomp1: OpenMP runtime CTranslate2 links against on CPU.
+# libgomp1: OpenMP runtime CTranslate2 links against. PyAV (via faster-whisper)
+# carries its own ffmpeg, so no system ffmpeg needed.
 RUN apt-get update && apt-get install -y --no-install-recommends \
       libgomp1 ca-certificates \
     && rm -rf /var/lib/apt/lists/*
@@ -14,13 +14,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app.py .
 
-# HF model cache lands here — mount a volume so the ~1.5GB CrisperWhisper download
-# survives restarts/redeploys instead of re-pulling every boot.
-ENV ASR_MODEL=nyrahealth/faster_CrisperWhisper \
+# HF cache on a volume so the model download survives restarts.
+ENV ASR_MODEL=large-v3-turbo \
+    ASR_COMPUTE_TYPE=int8 \
     HF_HOME=/models
 
 EXPOSE 9000
 
-# Single worker: the model is held warm in-process and a second worker would just
-# double the RAM for a second copy. Scale by replicas, not workers.
 CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "9000", "--workers", "1"]

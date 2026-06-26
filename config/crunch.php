@@ -112,7 +112,7 @@ return [
             // vanilla ONNX Whisper deletes by design. The PHP side just calls it over
             // HTTP — see the `asr` block below for the endpoint.
             'kind' => 'sidecar',
-            'model' => env('CRUNCH_ASR_MODEL', 'nyrahealth/faster_CrisperWhisper'),
+            'model' => env('CRUNCH_ASR_MODEL', 'large-v3-turbo'),
             'async' => true,
         ],
     ],

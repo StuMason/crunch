@@ -1,6 +1,5 @@
-# Pinned loosely (^-style) — let pip take latest compatible. faster-whisper pulls
-# ctranslate2 (CTranslate2 runtime) and av (PyAV, bundles ffmpeg for decoding any
-# input format, so no system ffmpeg needed).
+# Whisper large-v3-turbo via faster-whisper (CTranslate2) — clean, fast, accurate
+# word-level timestamps on CPU. faster-whisper pulls ctranslate2 + av (bundled ffmpeg).
 faster-whisper>=1.0
 fastapi>=0.110
 uvicorn[standard]>=0.29
