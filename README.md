@@ -96,20 +96,20 @@ Full, interactive reference (with "Try it"): **[/docs/api](https://crunch.stumas
 
 ## How it works
 
-```
-                 ┌─────────────────────────────────────────┐
-  HTTP  ──────▶  │  app: Laravel + Octane (FrankenPHP)      │
-  (Bearer)       │   • CrunchAuth: tokens · quotas · usage  │
-                 │   • InferenceManager: warm models 🔥     │
-                 │   • transformers-php (ONNX Runtime / FFI)│
-                 │   • SQLite (WAL) · database queue        │
-                 └──────────────────┬──────────────────────┘
-                                    │ HTTP (internal, /transcribe only)
-                                    ▼
-                 ┌─────────────────────────────────────────┐
-                 │  asr: Python speech-to-text sidecar      │
-                 │   • faster-whisper · large-v3-turbo      │
-                 └─────────────────────────────────────────┘
+```mermaid
+flowchart TD
+    client["HTTP client · Bearer token"] --> app
+    subgraph app["app — Laravel + Octane (FrankenPHP)"]
+        direction TB
+        auth["CrunchAuth · tokens · quotas · usage"]
+        mgr["InferenceManager · warm models 🔥"]
+        onnx["transformers-php · ONNX Runtime / FFI"]
+        store[("SQLite WAL · database queue")]
+    end
+    app -- "HTTP · internal · /transcribe only" --> asr
+    subgraph asr["asr — Python speech-to-text sidecar"]
+        fw["faster-whisper · large-v3-turbo"]
+    end
 ```
 
 Encoder inference runs in-process via [transformers-php](https://github.com/CodeWithKyrian/transformers-php).
