@@ -6,9 +6,11 @@ use App\Actions\Inference\Caption;
 use App\Actions\Inference\ClassifyImage;
 use App\Actions\Inference\ClassifyText;
 use App\Actions\Inference\Rerank;
+use App\Actions\Inference\Transcribe;
 use App\Jobs\TranscribeJob;
 use App\Models\InferenceJob;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Queue;
 
 uses(RefreshDatabase::class);
@@ -85,6 +87,48 @@ it('queues a transcription and returns a pollable job', function () {
     Queue::assertPushed(TranscribeJob::class);
     expect(InferenceJob::count())->toBe(1);
     expect($response->json('id'))->not->toBeEmpty();
+});
+
+it('stores a verbatim transcript with word timestamps from the asr sidecar', function () {
+    config(['crunch.asr.url' => 'http://asr:9000']);
+
+    // The sidecar's raw verbatim payload — fillers intact ("um"), word-level times.
+    Http::fake([
+        'asr:9000/transcribe' => Http::response([
+            'model' => 'nyrahealth/faster_CrisperWhisper',
+            'text' => 'So um I built a scraper.',
+            'duration' => 3.2,
+            'language' => 'en',
+            'words' => [
+                ['w' => 'So', 'start' => 0.0, 'end' => 0.2],
+                ['w' => 'um', 'start' => 0.24, 'end' => 0.5],
+                ['w' => 'I', 'start' => 0.62, 'end' => 0.7],
+                ['w' => 'built', 'start' => 0.7, 'end' => 1.0],
+            ],
+        ], 200),
+    ]);
+
+    $audioPath = tempnam(sys_get_temp_dir(), 'asr-test');
+    file_put_contents($audioPath, 'fake-audio-bytes');
+
+    $job = InferenceJob::create([
+        'type' => 'transcribe',
+        'status' => InferenceJob::STATUS_QUEUED,
+        'model' => config('crunch.models.transcribe.model'),
+    ]);
+
+    (new TranscribeJob($job->id, $audioPath))->handle(app(Transcribe::class));
+
+    $job->refresh();
+    expect($job->status)->toBe(InferenceJob::STATUS_COMPLETED);
+    expect($job->model)->toBe('nyrahealth/faster_CrisperWhisper');
+    expect($job->result['text'])->toBe('So um I built a scraper.');
+    expect($job->result['duration'])->toBe(3.2);
+    expect($job->result['words'])->toHaveCount(4);
+    // The filler must survive end-to-end — verbatim is the whole reason for the sidecar.
+    expect($job->result['words'][1]['w'])->toBe('um');
+
+    Http::assertSent(fn ($request) => str_contains($request->url(), '/transcribe'));
 });
 
 it('polls a job by uid', function () {

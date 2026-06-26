@@ -1,0 +1,49 @@
+# crunch — multi-service stack for Coolify (docker-compose deployment).
+#
+#   app : FrankenPHP/Octane + the PHP/ONNX core (web + in-process queue worker).
+#   asr : Python verbatim-STT sidecar (CrisperWhisper). Internal only — never
+#         published; the app reaches it by service name over the compose network.
+#
+# Coolify provides the public proxy/domain to `app` on port 8000.
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      - asr
+    environment:
+      # Coolify magic: bind the app's domain (crunch.stumason.dev) to this service:port.
+      SERVICE_FQDN_APP_8000: https://crunch.stumason.dev
+      # Point the PHP transcribe path at the sidecar (matches config/crunch.php `asr`).
+      CRUNCH_ASR_URL: http://asr:9000
+      CRUNCH_ASR_TIMEOUT: "600"
+      # Everything else (APP_KEY, CRUNCH_API_KEY, DB_*, etc.) is supplied by Coolify's
+      # environment for this service.
+    volumes:
+      - models:/data/models       # ONNX model cache (transformers-php)
+      - database:/app/database     # SQLite
+      - storage:/app/storage       # framework + app storage (incl. resolved audio temp)
+    ports:
+      - "8000"                     # Coolify's proxy publishes this
+
+  asr:
+    build:
+      context: ./asr-sidecar
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      ASR_MODEL: nyrahealth/faster_CrisperWhisper
+      ASR_DEVICE: cpu
+      ASR_COMPUTE_TYPE: int8
+      HF_HOME: /models
+    volumes:
+      - asr_models:/models         # HF cache — persists the ~1.5GB CrisperWhisper download
+    # No `ports:` — internal to the stack only. Reached at http://asr:9000.
+
+volumes:
+  models:
+  database:
+  storage:
+  asr_models:

@@ -23,6 +23,20 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | ASR sidecar
+    |--------------------------------------------------------------------------
+    | Verbatim speech-to-text (CrisperWhisper) runs in a small Python service —
+    | the one capability the PHP/ONNX core can't do. Reached over the internal
+    | compose network; never exposed publicly. `timeout` is generous because CPU
+    | transcription of long audio is minutes, not milliseconds (it's an async job).
+    */
+    'asr' => [
+        'url' => env('CRUNCH_ASR_URL', 'http://asr:9000'),
+        'timeout' => (int) env('CRUNCH_ASR_TIMEOUT', 600),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Max batch size
     |--------------------------------------------------------------------------
     | Inference runs one input at a time on CPU (~100-175ms each), so a single
@@ -93,10 +107,12 @@ return [
             'model' => 'Xenova/vit-gpt2-image-captioning',
         ],
         'transcribe' => [
-            'kind' => 'pipeline',
-            'task' => 'automatic-speech-recognition',
-            'model' => 'onnx-community/distil-small.en',
-            'quantized' => false, // spike-proven fp32; runs in the queue worker, lazy-loaded
+            // Verbatim STT runs in the Python ASR sidecar (asr-sidecar/), NOT the
+            // PHP/ONNX pipeline: CrisperWhisper keeps fillers + word timestamps, which
+            // vanilla ONNX Whisper deletes by design. The PHP side just calls it over
+            // HTTP — see the `asr` block below for the endpoint.
+            'kind' => 'sidecar',
+            'model' => env('CRUNCH_ASR_MODEL', 'large-v3-turbo'),
             'async' => true,
         ],
     ],
