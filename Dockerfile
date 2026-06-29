@@ -20,6 +20,8 @@ RUN docker-php-ext-install -j"$(nproc)" ffi pdo_sqlite pcntl opcache bcmath \
         echo "memory_limit=1024M"; \
         echo "opcache.enable=1"; \
         echo "opcache.enable_cli=1"; \
+        echo "upload_max_filesize=100M"; \
+        echo "post_max_size=100M"; \
     } > /usr/local/etc/php/conf.d/crunch.ini
 
 COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
