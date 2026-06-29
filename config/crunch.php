@@ -43,10 +43,16 @@ return [
     | core caps image-to-text at vit-gpt2. Reached over the internal compose network;
     | never exposed publicly. Captioning on CPU is seconds, not milliseconds, but it's
     | a single synchronous call, so the timeout is short relative to the ASR one.
+    |
+    | `timeout` is kept under Cloudflare's ~100s edge cutoff so a genuinely stuck
+    | call surfaces a clean error instead of a CF 524. `max_inflight` caps how many
+    | vision requests may hit the single sidecar at once — excess requests get a fast
+    | 429 (see App\Http\Middleware\LimitInflight) rather than queueing into timeouts.
     */
     'vision' => [
         'url' => env('CRUNCH_VISION_URL', 'http://vision:9000'),
-        'timeout' => (int) env('CRUNCH_VISION_TIMEOUT', 120),
+        'timeout' => (int) env('CRUNCH_VISION_TIMEOUT', 90),
+        'max_inflight' => (int) env('CRUNCH_VISION_MAX_INFLIGHT', 2),
     ],
 
     /*

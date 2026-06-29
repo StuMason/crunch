@@ -20,7 +20,10 @@ services:
       CRUNCH_ASR_URL: http://asr:9000
       CRUNCH_ASR_TIMEOUT: "600"
       CRUNCH_VISION_URL: http://vision:9000
-      CRUNCH_VISION_TIMEOUT: "120"
+      # Kept under Cloudflare's ~100s edge cutoff so a stuck vision call returns a clean
+      # error instead of a CF 524. Concurrency is capped by LimitInflight, so healthy
+      # calls finish well inside this anyway.
+      CRUNCH_VISION_TIMEOUT: "90"
       # APP_KEY, CRUNCH_API_KEY, DB_*, etc. are injected by Coolify's app env.
     volumes:
       - models:/data/models       # ONNX model cache (transformers-php)
