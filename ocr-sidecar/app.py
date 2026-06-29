@@ -43,18 +43,52 @@ def get_paddle():
     """Build the PaddleOCR pipeline on first use (it costs ~1GB RAM, so we don't pay it
     until someone actually asks for engine=paddle). The doc-orientation / unwarping /
     textline-orientation sub-models are off: crunch feeds it already-upright UI crops, so
-    they'd only add latency and memory."""
+    they'd only add latency and memory.
+
+    On first build we self-verify against a synthetic text image: if paddle can't read its
+    own test image (e.g. the model cache didn't resolve at runtime), we raise instead of
+    quietly returning empty text on every request — a loud 5xx beats a silent dead engine."""
     global _paddle
     if _paddle is None:
         from paddleocr import PaddleOCR
 
-        _paddle = PaddleOCR(
+        pipeline = PaddleOCR(
             lang=PADDLE_LANG,
             use_doc_orientation_classify=False,
             use_doc_unwarping=False,
             use_textline_orientation=False,
         )
+        _assert_paddle_healthy(pipeline)
+        _paddle = pipeline
     return _paddle
+
+
+def _assert_paddle_healthy(pipeline) -> None:
+    """Render a known word and confirm paddle reads it — guards against a model cache that
+    didn't resolve at runtime (silently-empty inference)."""
+    from PIL import Image, ImageDraw, ImageFont
+
+    img = Image.new("RGB", (480, 120), "white")
+    draw = ImageDraw.Draw(img)
+    try:
+        font = ImageFont.load_default(size=48)
+    except TypeError:  # pragma: no cover - very old Pillow
+        font = ImageFont.load_default()
+    draw.text((20, 30), "Upgrade Plan", fill="black", font=font)
+    with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+        img.save(tmp.name)
+        probe = tmp.name
+    try:
+        result = pipeline.predict(probe)
+        rec = result[0].get("rec_texts") if result else None
+        texts = list(rec) if rec is not None else []
+        if not any(t for t in texts):
+            raise RuntimeError(
+                "PaddleOCR loaded but read no text from its self-test image — the model "
+                "cache likely didn't resolve at runtime (check HOME / ~/.paddlex)."
+            )
+    finally:
+        os.unlink(probe)
 
 
 @app.get("/health")
