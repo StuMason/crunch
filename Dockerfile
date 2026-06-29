@@ -27,17 +27,25 @@ COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
 WORKDIR /app
 
 COPY . .
+# Optional GitHub token for composer. When set, composer downloads dist zips via the
+# authenticated api.github.com endpoint instead of anonymous codeload.github.com (which
+# intermittently 400s), making the build reliable. Supply via Coolify as a build-time
+# env var (COMPOSER_GITHUB_TOKEN); a fine-grained, READ-ONLY (public repo contents) PAT
+# is plenty. Left empty it's a no-op and the retry loop below covers transient blips.
+ARG COMPOSER_GITHUB_TOKEN=""
 # composer install also pulls the arm64 ONNX Runtime via the transformers plugin.
-# Retry composer: it fetches dist zips from codeload.github.com, which intermittently
-# returns HTTP 400 on a handful of packages per build (transient, per-request). Without
-# a retry a single flaky download fails the whole image build. 5 attempts clears it.
+# Retry composer: even with a token, dist fetches can flake; 5 attempts clears it.
 RUN cp .env.example .env \
+    && if [ -n "$COMPOSER_GITHUB_TOKEN" ]; then \
+         composer config --global github-oauth.github.com "$COMPOSER_GITHUB_TOKEN"; \
+       fi \
     && for i in 1 2 3 4 5; do \
          echo "composer install (attempt $i/5)"; \
          composer install --no-dev --no-interaction --no-progress --prefer-dist --optimize-autoloader && break; \
          if [ "$i" = 5 ]; then echo "composer install failed after 5 attempts" && exit 1; fi; \
          echo "transient failure (likely a codeload 400) — retrying in 10s"; sleep 10; \
        done \
+    && composer config --global --unset github-oauth.github.com 2>/dev/null || true \
     && npm ci \
     && npm run build \
     && rm -rf node_modules
