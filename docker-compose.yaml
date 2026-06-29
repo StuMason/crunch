@@ -59,6 +59,10 @@ services:
     environment:
       ASR_MODEL: large-v3-turbo    # verbatim CrisperWhisper needs a GPU; turbo is the CPU answer
       ASR_COMPUTE_TYPE: int8
+      # CTranslate2 defaults to ~4 threads when unset; pin higher to speed up CPU
+      # transcription. Safe because the PHP queue runs ONE transcribe at a time, so a job
+      # gets the threads to itself rather than oversubscribing the shared box.
+      ASR_THREADS: "7"
       HF_HOME: /models
     volumes:
       - asr_models:/models         # HF cache — persists the model download
