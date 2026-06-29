@@ -110,7 +110,8 @@ class ImageController extends Controller
      *
      * Large frames are downscaled (longest edge ≤ ~1024px) before OCR so full-res
      * screenshots don't time out. If an image is still too large/dense to finish in time
-     * you get a **504** (`{"error": "Vision timed out…"}`) — downscale or crop and retry.
+     * you get a **422** (`{"error": "Vision couldn't process this image…"}`) — downscale
+     * or crop and retry.
      */
     public function ocr(Request $request, Ocr $ocr): JsonResponse
     {
@@ -148,8 +149,8 @@ class ImageController extends Controller
      * pixel coordinates of the image you sent. (Large frames are downscaled internally,
      * but boxes are mapped back to your original dimensions.)
      *
-     * If an image is too large/dense to finish in time you get a **504**
-     * (`{"error": "Vision timed out…"}`) — downscale or crop and retry.
+     * If an image is too large/dense to finish in time you get a **422**
+     * (`{"error": "Vision couldn't process this image…"}`) — downscale or crop and retry.
      */
     public function detect(Request $request, DetectObjects $detect): JsonResponse
     {

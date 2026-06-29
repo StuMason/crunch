@@ -71,10 +71,13 @@ class VisionClient
         } catch (ConnectionException $e) {
             // cURL 28 = the sidecar didn't answer within the deadline — a too-large or
             // too-dense image (issues #11/#12), distinct from the sidecar being down.
-            // Surface 504 so callers can downscale/crop and retry, not treat it as a 500.
+            // Use 422 (not 504): Cloudflare intercepts origin 502/504 and replaces the body
+            // with its own opaque "error code: 504" page, so our actionable JSON never
+            // reaches the caller (proven against the live edge). 4xx passes through CF
+            // untouched, so a 422 "downscale or crop" message actually lands.
             $message = strtolower($e->getMessage());
             if (str_contains($message, 'timed out') || str_contains($message, 'curl error 28')) {
-                throw new VisionUnavailableException(504, "Vision timed out after {$timeout}s — the image is too large or dense. Downscale (longest edge ≤ ~1024px) or crop, then retry.", $e);
+                throw new VisionUnavailableException(422, "Vision couldn't process this image within {$timeout}s — it's too large or dense. Downscale (longest edge ≤ ~1024px) or crop, then retry.", $e);
             }
 
             throw new VisionUnavailableException(503, "Vision sidecar unreachable at {$base}.", $e);
