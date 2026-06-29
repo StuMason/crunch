@@ -1,5 +1,9 @@
 # crunch OCR sidecar — Tesseract (default) + PaddleOCR PP-OCRv6 (lazy), CPU.
-FROM python:3.11-slim
+#
+# Python 3.13 specifically: PaddleOCR was validated on the cp313 aarch64 paddlepaddle wheel.
+# The cp311 wheel produced silently-empty inference on this box (ran, no error, no text), so
+# we pin to the ABI we actually tested. The build self-test below guards against a regression.
+FROM python:3.13-slim
 
 # tesseract-ocr: the OCR binary pytesseract shells out to (eng traineddata included).
 # libgl1 + libglib2.0-0: PaddleOCR/OpenCV link libGL.so.1 / libgthread at import — the
@@ -13,12 +17,13 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY app.py .
+COPY app.py selftest.py ./
 
 # Pre-bake the PaddleOCR PP-OCRv6 det+rec models into the image (~130MB) so the first
-# `engine=paddle` request doesn't stall on a download. This only writes to disk — paddle
-# is still lazy-loaded into RAM at request time (tesseract-only stays ~70MB).
-RUN python -c "from paddleocr import PaddleOCR; PaddleOCR(lang='en', use_doc_orientation_classify=False, use_doc_unwarping=False, use_textline_orientation=False)"
+# `engine=paddle` request doesn't stall on a download, AND assert paddle can actually read
+# text on this box — a silently-empty wheel fails the build here instead of at runtime. This
+# only writes models to disk; paddle is still lazy-loaded into RAM per request (idle ~70MB).
+RUN python selftest.py
 
 ENV OCR_DEFAULT_ENGINE=tesseract \
     OCR_DEFAULT_PSM=6
