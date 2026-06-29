@@ -19,6 +19,12 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app.py selftest.py ./
 
+# Pin HOME so the build-time bake and the runtime process resolve the SAME PaddleOCR model
+# cache (~/.paddlex). Without this, the build `RUN` (HOME=/root) bakes models to /root/.paddlex
+# but the runtime container's HOME isn't guaranteed to be /root — paddle then finds no models
+# and returns empty in ~0.2s with no error (observed on prod). Setting HOME makes them agree.
+ENV HOME=/root
+
 # Pre-bake the PaddleOCR PP-OCRv6 det+rec models into the image (~130MB) so the first
 # `engine=paddle` request doesn't stall on a download, AND assert paddle can actually read
 # text on this box — a silently-empty wheel fails the build here instead of at runtime. This
