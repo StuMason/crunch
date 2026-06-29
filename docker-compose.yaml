@@ -20,10 +20,12 @@ services:
       CRUNCH_ASR_URL: http://asr:9000
       CRUNCH_ASR_TIMEOUT: "600"
       CRUNCH_VISION_URL: http://vision:9000
-      # Kept under Cloudflare's ~100s edge cutoff so a stuck vision call returns a clean
-      # error instead of a CF 524. Concurrency is capped by LimitInflight, so healthy
-      # calls finish well inside this anyway.
-      CRUNCH_VISION_TIMEOUT: "90"
+      # Must clear Cloudflare's edge timeout with MARGIN: at 90s our 504 raced the edge and
+      # the client got Cloudflare's opaque "error code: 504" page instead of our actionable
+      # JSON. 60s lets our 504 ({"error":"…downscale or crop…"}) flush first. Healthy calls
+      # finish far inside this (detect ~19s, caption ~11s, OCR crop ~7s); only dense
+      # full-frame OCR exceeds it — which is exactly what should 504.
+      CRUNCH_VISION_TIMEOUT: "60"
       # APP_KEY, CRUNCH_API_KEY, DB_*, etc. are injected by Coolify's app env.
     volumes:
       - models:/data/models       # ONNX model cache (transformers-php)
