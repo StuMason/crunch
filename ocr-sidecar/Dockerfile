@@ -1,8 +1,11 @@
 # crunch OCR sidecar — Tesseract (default) + PaddleOCR PP-OCRv6 (lazy), CPU.
 #
-# Python 3.13 specifically: PaddleOCR was validated on the cp313 aarch64 paddlepaddle wheel.
-# The cp311 wheel produced silently-empty inference on this box (ran, no error, no text), so
-# we pin to the ABI we actually tested. The build self-test below guards against a regression.
+# Python 3.13: validated against the cp313 paddlepaddle wheel. paddlepaddle 3.2.2 ships
+# manylinux wheels for cp311 + cp313 on both x86_64 and aarch64, so this builds on either arch.
+# (History: on the old aarch64 box the cp311 wheel ran but produced silently-empty inference,
+# so we standardised on cp313.) Belt-and-braces against any wheel/arch surprise: the build
+# self-test below AND the runtime self-verify in app.py both fail LOUD if paddle can't actually
+# read text — so a port to a new arch can't silently ship a dead engine.
 FROM python:3.13-slim
 
 # tesseract-ocr: the OCR binary pytesseract shells out to (eng traineddata included).
