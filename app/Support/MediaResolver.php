@@ -52,6 +52,24 @@ class MediaResolver
     }
 
     /**
+     * Decode a base64 (or data-URI) image and persist it to a temp file an async job can
+     * read, returning the path. Aborts 422 if the string isn't valid base64 — used by the
+     * batch path, which validates every crop up front so a malformed item fails fast
+     * (before any job is queued) rather than producing an empty file the sidecar chokes on.
+     */
+    public static function persistBase64(string $data, string $context = 'image'): string
+    {
+        $raw = preg_replace('#^data:[^;]+;base64,#', '', $data);
+        $bytes = base64_decode((string) $raw, true);
+
+        if ($bytes === false || $bytes === '') {
+            abort(422, "{$context} is not valid base64.");
+        }
+
+        return self::writeTemp($bytes);
+    }
+
+    /**
      * Reject non-http(s) schemes and URLs that resolve to private/reserved IPs (SSRF guard).
      */
     private static function assertSafeUrl(string $url): void

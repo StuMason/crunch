@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 use App\Http\Controllers\Api\EmbeddingController;
 use App\Http\Controllers\Api\ImageController;
+use App\Http\Controllers\Api\JobController;
+use App\Http\Controllers\Api\OcrBatchController;
 use App\Http\Controllers\Api\TextController;
 use App\Http\Controllers\Api\TranscriptionController;
 use App\Http\Middleware\CrunchAuth;
@@ -38,7 +40,13 @@ Route::middleware(CrunchAuth::class)->group(function () {
         Route::post('/detect', [ImageController::class, 'detect']);
     });
 
-    // Audio: async transcription (queue) + job polling
+    // Audio: async transcription (queue).
     Route::post('/transcribe', [TranscriptionController::class, 'transcribe']);
-    Route::get('/jobs/{job}', [TranscriptionController::class, 'show']);
+
+    // Batch OCR: many crops in one async job, drained within the vision inflight cap (the
+    // submit is cheap — it just persists + queues — so it doesn't need the LimitInflight guard).
+    Route::post('/ocr/batch', [OcrBatchController::class, 'store']);
+
+    // Poll any async job (transcribe, ocr-batch) by id.
+    Route::get('/jobs/{job}', [JobController::class, 'show']);
 });
