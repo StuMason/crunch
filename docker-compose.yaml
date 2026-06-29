@@ -71,6 +71,9 @@ services:
     environment:
       VISION_MODEL: microsoft/Florence-2-base
       HF_HOME: /models
+      # Downscale frames whose longest edge exceeds this before inference (issue #11).
+      # Keeps full-res screen captures inside the CPU latency budget; 0 disables.
+      VISION_MAX_EDGE: "1024"
     volumes:
       - vision_models:/models      # HF cache — persists the model download
     networks:

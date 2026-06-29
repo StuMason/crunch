@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Inference;
 
+use App\Exceptions\VisionUnavailableException;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Support\Facades\Http;
 use RuntimeException;
@@ -60,17 +61,32 @@ class VisionClient
             throw new RuntimeException("Cannot read image file: {$imagePath}");
         }
 
+        $timeout = (int) config('crunch.vision.timeout', 120);
+
         try {
-            $response = Http::timeout((int) config('crunch.vision.timeout', 120))
+            $response = Http::timeout($timeout)
                 ->asMultipart()
                 ->attach('image', $contents, basename($imagePath))
                 ->post("{$base}/caption", $fields);
         } catch (ConnectionException $e) {
-            throw new RuntimeException("Vision sidecar unreachable at {$base}: {$e->getMessage()}", previous: $e);
+            // cURL 28 = the sidecar didn't answer within the deadline — a too-large or
+            // too-dense image (issues #11/#12), distinct from the sidecar being down.
+            // Surface 504 so callers can downscale/crop and retry, not treat it as a 500.
+            $message = strtolower($e->getMessage());
+            if (str_contains($message, 'timed out') || str_contains($message, 'curl error 28')) {
+                throw new VisionUnavailableException(504, "Vision timed out after {$timeout}s — the image is too large or dense. Downscale (longest edge ≤ ~1024px) or crop, then retry.", $e);
+            }
+
+            throw new VisionUnavailableException(503, "Vision sidecar unreachable at {$base}.", $e);
         }
 
         if ($response->failed()) {
             $error = $response->json('detail') ?? $response->body();
+
+            // A timeout/overload reported by the sidecar itself keeps its status (504/503).
+            if (in_array($response->status(), [503, 504], true)) {
+                throw new VisionUnavailableException($response->status(), "Vision unavailable: {$error}");
+            }
 
             throw new RuntimeException("Vision sidecar error ({$response->status()}): {$error}");
         }
