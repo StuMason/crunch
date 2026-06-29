@@ -45,6 +45,9 @@ vendor — and to babysitting a pile of separate model servers.
 | `POST /moderate` | Flag harmful content (multi-category) | KoalaAI Text-Moderation |
 | `POST /classify-image` | Score an image against your own labels (zero-shot) | CLIP ViT-L/14 |
 | `POST /caption` | Describe an image in words | Florence-2-base (Python sidecar) |
+| `POST /ocr` | Read the text out of an image | Florence-2-base (Python sidecar) |
+| `POST /detect` | Locate objects (boxes + labels) | Florence-2-base (Python sidecar) |
+| `POST /ocr/batch` → `GET /jobs/{id}` | OCR many crops in one async job (returns `{box, text}` per crop) | Florence-2-base (Python sidecar) |
 | `POST /transcribe` → `GET /jobs/{id}` | Speech → text + word timestamps (async) | Whisper large-v3-turbo (Python sidecar) |
 
 Every model is a **one-line swap** in `config/crunch.php`.
