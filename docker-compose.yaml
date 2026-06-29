@@ -2,7 +2,8 @@
 #
 #   app    : FrankenPHP/Octane + the PHP/ONNX core (web + in-process queue worker).
 #   asr    : Whisper large-v3-turbo sidecar (faster-whisper). Internal only.
-#   vision : Florence-2-base captioning sidecar (transformers). Internal only.
+#   vision : Florence-2-base caption/detect sidecar (transformers). Internal only.
+#   ocr    : OCR sidecar — Tesseract (default) + PaddleOCR (lazy). Internal only.
 #
 # Traefik routing for the public domain is declared explicitly on `app` below —
 # Coolify's SERVICE_FQDN magic doesn't wire it for compose deploys, so we attach the
@@ -16,10 +17,17 @@ services:
     depends_on:
       - asr
       - vision
+      - ocr
     environment:
       CRUNCH_ASR_URL: http://asr:9000
       CRUNCH_ASR_TIMEOUT: "600"
       CRUNCH_VISION_URL: http://vision:9000
+      # Dedicated OCR sidecar (Tesseract default + PaddleOCR opt-in). Tesseract finishes in
+      # well under a second; paddle on a dense crop can take 5–10s — 60s leaves margin under
+      # Cloudflare's edge cutoff so a genuinely stuck call returns our 422, not a CF page.
+      CRUNCH_OCR_URL: http://ocr:9000
+      CRUNCH_OCR_TIMEOUT: "60"
+      CRUNCH_OCR_DEFAULT_ENGINE: tesseract
       # Must clear Cloudflare's edge timeout with MARGIN: at 90s our 504 raced the edge and
       # the client got Cloudflare's opaque "error code: 504" page instead of our actionable
       # JSON. 30s lets our 504 ({"error":"…downscale or crop…"}) flush first. Healthy calls
@@ -81,6 +89,19 @@ services:
       VISION_MAX_EDGE: "1024"
     volumes:
       - vision_models:/models      # HF cache — persists the model download
+    networks:
+      - default                    # internal only; never exposed to Traefik
+
+  ocr:
+    build:
+      context: ./ocr-sidecar
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      # Tesseract is the default (tiny, fast, layout-preserving). PaddleOCR is lazy-loaded
+      # on the first engine=paddle request, so this service idles at ~70MB until then.
+      OCR_DEFAULT_ENGINE: tesseract
+      OCR_DEFAULT_PSM: "6"
     networks:
       - default                    # internal only; never exposed to Traefik
 

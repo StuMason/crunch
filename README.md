@@ -45,9 +45,9 @@ vendor — and to babysitting a pile of separate model servers.
 | `POST /moderate` | Flag harmful content (multi-category) | KoalaAI Text-Moderation |
 | `POST /classify-image` | Score an image against your own labels (zero-shot) | CLIP ViT-L/14 |
 | `POST /caption` | Describe an image in words | Florence-2-base (Python sidecar) |
-| `POST /ocr` | Read the text out of an image | Florence-2-base (Python sidecar) |
+| `POST /ocr` | Read the text out of an image (`engine=` tesseract/paddle/florence) | Tesseract (default) · PaddleOCR · Florence-2 (Python sidecar) |
 | `POST /detect` | Locate objects (boxes + labels) | Florence-2-base (Python sidecar) |
-| `POST /ocr/batch` → `GET /jobs/{id}` | OCR many crops in one async job (returns `{box, text}` per crop) | Florence-2-base (Python sidecar) |
+| `POST /ocr/batch` → `GET /jobs/{id}` | OCR many crops in one async job (returns `{box, text}` per crop) | Tesseract (default) · PaddleOCR · Florence-2 (Python sidecar) |
 | `POST /transcribe` → `GET /jobs/{id}` | Speech → text + word timestamps (async) | Whisper large-v3-turbo (Python sidecar) |
 
 Every model is a **one-line swap** in `config/crunch.php`.
@@ -110,20 +110,28 @@ flowchart TD
         store[("SQLite WAL · database queue")]
     end
     app -- "HTTP · internal · /transcribe" --> asr
-    app -- "HTTP · internal · /caption" --> vision
+    app -- "HTTP · internal · /caption · /detect" --> vision
+    app -- "HTTP · internal · /ocr" --> ocr
     subgraph asr["asr — Python speech-to-text sidecar"]
         fw["faster-whisper · large-v3-turbo"]
     end
     subgraph vision["vision — Python vision sidecar"]
         fl["transformers · Florence-2-base"]
     end
+    subgraph ocr["ocr — Python OCR sidecar"]
+        te["Tesseract (default)"]
+        pa["PaddleOCR PP-OCRv6 (lazy)"]
+    end
 ```
 
 Encoder inference runs in-process via [transformers-php](https://github.com/CodeWithKyrian/transformers-php).
-Two capabilities ONNX can't do live in small Python sidecars: **transcription** (async — a queue
+Capabilities ONNX can't do live in small Python sidecars: **transcription** (async — a queue
 worker hands audio to the `asr` sidecar/faster-whisper, clients poll `/jobs/{id}`; verbatim models
-like CrisperWhisper need a GPU, so turbo is the CPU-friendly choice) and **captioning** (synchronous
-— `/caption` calls the `vision` sidecar/Florence-2-base, which transformers-php can't run).
+like CrisperWhisper need a GPU, so turbo is the CPU-friendly choice), **captioning/detection**
+(synchronous — `/caption` + `/detect` call the `vision` sidecar/Florence-2-base, which
+transformers-php can't run), and **OCR** (`/ocr` calls the dedicated `ocr` sidecar — Tesseract by
+default, PaddleOCR opt-in via `engine=paddle`; Florence-2 garbles dense UI text, so it's purpose-built
+here and PaddleOCR stays lazy-loaded to keep idle RAM low).
 
 ## Self-hosting
 

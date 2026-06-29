@@ -1,0 +1,12 @@
+# crunch OCR sidecar — Tesseract (default) + PaddleOCR (opt-in, lazy-loaded).
+#
+# PINNED on purpose: PaddleOCR's pipeline API and result keys (rec_texts/rec_boxes) shift
+# between minor versions, and an unpinned faster-whisper already bit us once on the ASR
+# sidecar. These are the exact versions benchmarked + validated on aarch64 for #13.
+paddleocr==3.7.0          # PP-OCRv6 det+rec; pulls paddlex
+paddlepaddle==3.2.2       # CPU inference engine — has a manylinux2014_aarch64 wheel
+pytesseract==0.3.13       # thin wrapper over the system `tesseract` binary (apt, in Dockerfile)
+pillow>=10.0
+fastapi>=0.110
+uvicorn[standard]>=0.29
+python-multipart>=0.0.9

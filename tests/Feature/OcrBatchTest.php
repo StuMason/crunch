@@ -26,10 +26,36 @@ it('queues a batch OCR job and returns a pollable job', function () {
         ->assertJsonPath('type', 'ocr-batch')
         ->assertJsonPath('status', 'queued');
 
-    Queue::assertPushed(OcrBatchJob::class, fn ($job) => count($job->crops) === 2);
+    Queue::assertPushed(OcrBatchJob::class, fn ($job) => count($job->crops) === 2 && $job->engine === 'tesseract');
     expect(InferenceJob::count())->toBe(1);
     expect($response->json('id'))->not->toBeEmpty();
     expect($response->json('poll_url'))->toContain('/jobs/');
+});
+
+it('threads a chosen engine onto the batch job and labels the job model', function () {
+    Queue::fake();
+
+    $response = $this->withToken('test-key')
+        ->postJson('/ocr/batch', [
+            'engine' => 'paddle',
+            'psm' => 7,
+            'crops' => [['box' => 0, 'image' => base64_encode('fake-crop')]],
+        ])
+        ->assertStatus(202)
+        ->assertJsonPath('model', 'PaddleOCR PP-OCRv6');
+
+    Queue::assertPushed(OcrBatchJob::class, fn ($job) => $job->engine === 'paddle' && $job->psm === 7);
+    expect($response->json('id'))->not->toBeEmpty();
+});
+
+it('rejects an unknown engine on the batch endpoint', function () {
+    Queue::fake();
+
+    $this->withToken('test-key')
+        ->postJson('/ocr/batch', ['engine' => 'floop', 'crops' => [['image' => base64_encode('x')]]])
+        ->assertStatus(422);
+
+    Queue::assertNothingPushed();
 });
 
 it('OCRs each crop and records one {box, text} result per crop in order', function () {
