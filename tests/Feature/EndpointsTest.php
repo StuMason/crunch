@@ -146,7 +146,7 @@ it('zips Florence-2 detection output into objects (sidecar)', function () {
     expect($objects[0])->toBe(['label' => 'dog', 'box' => [10.0, 20.0, 30.0, 40.0]]);
 });
 
-it('extracts and trims OCR text (sidecar)', function () {
+it('extracts and trims OCR text via the florence engine (vision sidecar)', function () {
     config(['crunch.vision.url' => 'http://vision:9000']);
 
     Http::fake(['vision:9000/caption' => Http::response([
@@ -158,7 +158,43 @@ it('extracts and trims OCR text (sidecar)', function () {
     $img = tempnam(sys_get_temp_dir(), 'ocr');
     file_put_contents($img, 'x');
 
-    expect(app(Ocr::class)->handle($img))->toBe('hello world');
+    expect(app(Ocr::class)->handle($img, 'florence'))->toBe('hello world');
+});
+
+it('routes the default engine to the OCR sidecar (tesseract), trimming the result', function () {
+    config(['crunch.ocr.url' => 'http://ocr:9000']);
+
+    Http::fake(['ocr:9000/ocr' => Http::response([
+        'engine' => 'tesseract',
+        'text' => '  Upgrade Plan  ',
+        'model' => 'tesseract',
+        'infer_secs' => 0.2,
+    ], 200)]);
+
+    $img = tempnam(sys_get_temp_dir(), 'ocr');
+    file_put_contents($img, 'x');
+
+    expect(app(Ocr::class)->handle($img))->toBe('Upgrade Plan');
+    Http::assertSent(fn ($request) => str_contains($request->url(), 'ocr:9000/ocr'));
+});
+
+it('reports the chosen engine + model label on the OCR response', function () {
+    config(['crunch.ocr.url' => 'http://ocr:9000']);
+
+    Http::fake(['ocr:9000/ocr' => Http::response(['engine' => 'paddle', 'text' => 'crunch-bench', 'model' => 'paddleocr/en'], 200)]);
+
+    $this->withToken('test-key')
+        ->postJson('/ocr', ['image' => base64_encode('fake-img'), 'engine' => 'paddle'])
+        ->assertOk()
+        ->assertJsonPath('engine', 'paddle')
+        ->assertJsonPath('model', 'PaddleOCR PP-OCRv6')
+        ->assertJsonPath('text', 'crunch-bench');
+});
+
+it('rejects an unknown OCR engine', function () {
+    $this->withToken('test-key')
+        ->postJson('/ocr', ['image' => base64_encode('fake-img'), 'engine' => 'floop'])
+        ->assertStatus(422);
 });
 
 it('captions an image via the vision sidecar (Florence-2)', function () {

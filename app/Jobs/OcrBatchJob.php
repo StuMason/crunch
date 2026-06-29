@@ -38,6 +38,8 @@ class OcrBatchJob implements ShouldQueue
     public function __construct(
         public int $jobId,
         public array $crops,
+        public string $engine = 'tesseract',
+        public ?int $psm = null,
     ) {}
 
     public function handle(Ocr $ocr): void
@@ -48,7 +50,7 @@ class OcrBatchJob implements ShouldQueue
         $results = [];
         foreach ($this->crops as $crop) {
             try {
-                $results[] = ['box' => $crop['box'], 'text' => $ocr->handle($crop['path']), 'error' => null];
+                $results[] = ['box' => $crop['box'], 'text' => $ocr->handle($crop['path'], $this->engine, $this->psm), 'error' => null];
             } catch (Throwable $e) {
                 $results[] = ['box' => $crop['box'], 'text' => null, 'error' => $e->getMessage()];
             } finally {

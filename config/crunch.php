@@ -57,6 +57,21 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | OCR sidecar (ocr-sidecar/)
+    |--------------------------------------------------------------------------
+    | Dedicated document/UI-text OCR — Florence-2 (the vision sidecar) hallucinates on
+    | dense UI glyphs, which is the `roll` workload. `tesseract` is the fast, tiny default;
+    | `paddle` (PaddleOCR, lazy-loaded) is the heavier high-accuracy opt-in. `florence`
+    | still routes back to the vision sidecar. Engine is chosen per request via `engine=`.
+    */
+    'ocr' => [
+        'url' => env('CRUNCH_OCR_URL', 'http://ocr:9000'),
+        'timeout' => (int) env('CRUNCH_OCR_TIMEOUT', 60),
+        'default_engine' => env('CRUNCH_OCR_DEFAULT_ENGINE', 'tesseract'),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Max batch size
     |--------------------------------------------------------------------------
     | Inference runs one input at a time on CPU (~100-175ms each), so a single

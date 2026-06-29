@@ -106,24 +106,32 @@ class ImageController extends Controller
      * **Send the image** as a `url`, a base64 `image` string, or a multipart upload
      * (same as the other image endpoints).
      *
-     * **Get back:** `{ "text": "STOP" }` (empty string if there's no text).
+     * **Pick an `engine`** (optional): `tesseract` (default — fast, tiny, layout-preserving,
+     * great for dense UI text), `paddle` (PaddleOCR — best accuracy on small/low-contrast
+     * glyphs, heavier/slower), or `florence` (the original Florence-2 path). Tesseract also
+     * takes an optional `psm` page-segmentation mode (`6` = block, default; `7` = single line —
+     * good for a one-line button/label crop).
      *
-     * Large frames are downscaled (longest edge ≤ ~1024px) before OCR so full-res
-     * screenshots don't time out. If an image is still too large/dense to finish in time
-     * you get a **422** (`{"error": "Vision couldn't process this image…"}`) — downscale
-     * or crop and retry.
+     * **Get back:** `{ "engine": "tesseract", "model": "tesseract", "text": "STOP" }` (empty
+     * `text` if there's no text). If an image is too large/dense to finish in time you get a
+     * **422** — downscale or crop a tighter region and retry.
      */
     public function ocr(Request $request, Ocr $ocr): JsonResponse
     {
-        $request->validate([
+        $validated = $request->validate([
             'url' => ['sometimes', 'string'],
             'image' => ['sometimes'],
+            'engine' => ['sometimes', 'in:tesseract,paddle,florence'],
+            'psm' => ['sometimes', 'integer', 'min:0', 'max:13'],
         ]);
+
+        $engine = $validated['engine'] ?? (string) config('crunch.ocr.default_engine', 'tesseract');
+        $psm = isset($validated['psm']) ? (int) $validated['psm'] : null;
 
         [$image, $isTemp] = MediaResolver::resolve($request, 'image', mustBeLocal: true);
 
         try {
-            $text = $ocr->handle($image);
+            $text = $ocr->handle($image, $engine, $psm);
         } finally {
             if ($isTemp) {
                 @unlink($image);
@@ -131,7 +139,8 @@ class ImageController extends Controller
         }
 
         return response()->json([
-            'model' => config('crunch.models.ocr.model'),
+            'engine' => $engine,
+            'model' => Ocr::modelLabel($engine),
             'text' => $text,
         ]);
     }

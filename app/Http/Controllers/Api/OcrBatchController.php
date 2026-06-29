@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers\Api;
 
+use App\Actions\Inference\Ocr;
 use App\Http\Controllers\Controller;
 use App\Jobs\OcrBatchJob;
 use App\Models\InferenceJob;
@@ -33,6 +34,8 @@ class OcrBatchController extends Controller
      * `{"box": [x, y, w, h], "image": "<base64>"}` — `image` is the crop's bytes as base64
      * (a `data:` URI is fine); `box` is optional and echoed back verbatim so you can map
      * each result to where it came from (it can be any JSON — an array, an object, an id).
+     * An optional batch-level `engine` (`tesseract` default, `paddle`, or `florence`) and
+     * `psm` apply to every crop — same engines as `POST /ocr`.
      *
      * **Get back:** `202 Accepted` with a job — note its `id` and poll it. When complete,
      * `result.results` is an array (in submission order) of `{box, text, error}`: `box` as
@@ -42,11 +45,16 @@ class OcrBatchController extends Controller
      */
     public function store(Request $request): JsonResponse
     {
-        $request->validate([
+        $validated = $request->validate([
             'crops' => ['required', 'array', 'min:1', 'max:'.self::MAX_CROPS],
             'crops.*.image' => ['required', 'string'],   // the crop bytes as base64 / data-URI
             'crops.*.box' => ['sometimes'],              // echoed back verbatim (e.g. [x,y,w,h])
+            'engine' => ['sometimes', 'in:tesseract,paddle,florence'],
+            'psm' => ['sometimes', 'integer', 'min:0', 'max:13'],
         ]);
+
+        $engine = $validated['engine'] ?? (string) config('crunch.ocr.default_engine', 'tesseract');
+        $psm = isset($validated['psm']) ? (int) $validated['psm'] : null;
 
         // Decode + persist every crop up front: a malformed crop fails fast as a 422 (before
         // any job is queued), and the worker reads the bytes from disk — not from a bloated
@@ -62,10 +70,10 @@ class OcrBatchController extends Controller
         $job = InferenceJob::create([
             'type' => 'ocr-batch',
             'status' => InferenceJob::STATUS_QUEUED,
-            'model' => config('crunch.models.ocr.model'),
+            'model' => Ocr::modelLabel($engine),
         ]);
 
-        OcrBatchJob::dispatch($job->id, $items);
+        OcrBatchJob::dispatch($job->id, $items, $engine, $psm);
 
         return response()->json(JobPresenter::present($job), 202);
     }
