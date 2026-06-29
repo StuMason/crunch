@@ -27,6 +27,13 @@ from PIL import Image
 MODEL = os.environ.get("VISION_MODEL", "microsoft/Florence-2-base")
 NUM_BEAMS = int(os.environ.get("VISION_NUM_BEAMS", "3"))
 
+# Florence-2 OCR/detection on a full-res screen frame (e.g. 2560x1440) blows the CPU
+# latency budget — it tries to read/box every glyph and runs for >90s, returning a 500
+# (issue #11). Downscaling the longest edge to MAX_EDGE before inference cuts the work
+# dramatically; coordinates are reported against the ORIGINAL size so callers still map.
+# 0 disables downscaling.
+MAX_EDGE = int(os.environ.get("VISION_MAX_EDGE", "1024"))
+
 # Map a friendly `detail` value to Florence-2's caption task token.
 DETAIL_TASKS = {
     "normal": "<CAPTION>",
@@ -87,6 +94,14 @@ async def caption(
     except Exception as exc:
         raise HTTPException(status_code=422, detail=f"unreadable image: {exc}") from exc
 
+    # Downscale oversized frames before inference (issue #11). thumbnail() preserves aspect
+    # ratio and mutates in place; we keep the original size so coordinates map to the frame
+    # the caller actually sent, not the downscaled one.
+    original_size = (img.width, img.height)
+    if MAX_EDGE > 0 and max(original_size) > MAX_EDGE:
+        img.thumbnail((MAX_EDGE, MAX_EDGE), Image.LANCZOS)
+    processed_size = (img.width, img.height)
+
     model, processor = load()
     started = time.time()
     try:
@@ -102,15 +117,18 @@ async def caption(
                 do_sample=False,
             )
         decoded = processor.batch_decode(generated_ids, skip_special_tokens=False)[0]
+        # Pass the ORIGINAL size so OCR/detection coordinates are scaled back to the
+        # frame the caller sent (aspect ratio is preserved, so the bins map cleanly).
         parsed = processor.post_process_generation(
-            decoded, task=prompt, image_size=(img.width, img.height)
+            decoded, task=prompt, image_size=original_size
         )
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"vision inference failed: {exc}") from exc
 
     infer = round(time.time() - started, 2)
     value = parsed.get(prompt, parsed)
+    sizes = {"original_size": list(original_size), "processed_size": list(processed_size)}
 
     if prompt in CAPTION_TASKS:
-        return {"model": MODEL, "task": prompt, "infer_secs": infer, "caption": str(value).strip()}
-    return {"model": MODEL, "task": prompt, "infer_secs": infer, "result": value}
+        return {"model": MODEL, "task": prompt, "infer_secs": infer, **sizes, "caption": str(value).strip()}
+    return {"model": MODEL, "task": prompt, "infer_secs": infer, **sizes, "result": value}
