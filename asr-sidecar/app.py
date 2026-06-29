@@ -26,6 +26,11 @@ DEVICE = os.environ.get("ASR_DEVICE", "cpu")
 COMPUTE_TYPE = os.environ.get("ASR_COMPUTE_TYPE", "int8")
 CPU_THREADS = int(os.environ.get("ASR_THREADS", "0"))  # 0 = use all cores (turbo is small)
 BEAM_SIZE = int(os.environ.get("ASR_BEAM_SIZE", "5"))
+# large-v3-turbo via faster-whisper otherwise emits all-lowercase, unpunctuated text.
+# Seeding the decoder with a short, punctuated prompt restores normal casing and
+# punctuation (it's prior context, not transcribed). Override/clear via env if it ever
+# leaks into output on very short clips.
+INITIAL_PROMPT = os.environ.get("ASR_INITIAL_PROMPT", "Okay, so let's take a look at this.")
 
 app = FastAPI(title="crunch-asr", version="4.0.0")
 _model = None
@@ -58,6 +63,7 @@ async def transcribe(audio: UploadFile = File(...)) -> dict:
             beam_size=BEAM_SIZE,
             word_timestamps=True,
             vad_filter=False,
+            initial_prompt=INITIAL_PROMPT or None,  # restores punctuation/casing
         )
         words, text_parts = [], []
         for seg in segments:
