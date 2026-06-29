@@ -43,7 +43,14 @@ return [
             'busy_timeout' => env('DB_BUSY_TIMEOUT', 5000),
             'journal_mode' => env('DB_JOURNAL_MODE', 'WAL'),
             'synchronous' => env('DB_SYNCHRONOUS', 'NORMAL'),
-            'transaction_mode' => 'DEFERRED',
+            // IMMEDIATE (not DEFERRED): begin write transactions with the write lock
+            // up-front so concurrent writers queue on busy_timeout instead of
+            // dead-locking on lock-upgrade. DEFERRED lets two txns both take a read
+            // lock then race to upgrade — SQLite returns SQLITE_BUSY *immediately*
+            // (busy_timeout does NOT apply to that case), surfacing as a fatal
+            // "database is locked" 500. That hit the CrunchAuth rate-limiter on every
+            // concurrent request and also made the LimitInflight cache-lock unreliable.
+            'transaction_mode' => env('DB_TRANSACTION_MODE', 'IMMEDIATE'),
         ],
 
         'mysql' => [
