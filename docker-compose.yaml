@@ -59,6 +59,9 @@ services:
     environment:
       ASR_MODEL: large-v3-turbo    # verbatim CrisperWhisper needs a GPU; turbo is the CPU answer
       ASR_COMPUTE_TYPE: int8
+      # Use all 16 cores (CAX41). cpu_threads defaults conservatively otherwise; the PHP
+      # queue runs ONE transcribe at a time so a job can have the whole box briefly.
+      ASR_THREADS: "16"
       HF_HOME: /models
     volumes:
       - asr_models:/models         # HF cache — persists the model download
