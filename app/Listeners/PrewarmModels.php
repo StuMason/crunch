@@ -22,6 +22,13 @@ class PrewarmModels
     {
         foreach ((array) config('crunch.warm', []) as $capability) {
             try {
+                // Sidecar-backed capabilities (caption/ocr/detect/transcribe) run in the
+                // Python sidecars, not the in-process InferenceManager — there is nothing
+                // to warm here, and asking for their engine would throw. Skip them.
+                if (($this->inference->config($capability)['kind'] ?? null) === 'sidecar') {
+                    continue;
+                }
+
                 $this->inference->engine($capability);
             } catch (Throwable $e) {
                 report($e);

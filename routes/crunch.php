@@ -7,6 +7,7 @@ use App\Http\Controllers\Api\ImageController;
 use App\Http\Controllers\Api\TextController;
 use App\Http\Controllers\Api\TranscriptionController;
 use App\Http\Middleware\CrunchAuth;
+use App\Http\Middleware\LimitInflight;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -26,11 +27,16 @@ Route::middleware(CrunchAuth::class)->group(function () {
     Route::post('/sentiment', [TextController::class, 'sentiment']);
     Route::post('/moderate', [TextController::class, 'moderate']);
 
-    // Image: zero-shot classification + Florence-2 captioning, OCR, object detection
+    // Image: zero-shot classification runs in-process (CLIP), so it scales with workers.
     Route::post('/classify-image', [ImageController::class, 'classify']);
-    Route::post('/caption', [ImageController::class, 'caption']);
-    Route::post('/ocr', [ImageController::class, 'ocr']);
-    Route::post('/detect', [ImageController::class, 'detect']);
+
+    // Caption/OCR/detect share the single, synchronous Florence-2 vision sidecar — cap
+    // in-flight concurrency so a burst gets a clean 429 instead of wedging the pool.
+    Route::middleware(LimitInflight::class.':vision')->group(function () {
+        Route::post('/caption', [ImageController::class, 'caption']);
+        Route::post('/ocr', [ImageController::class, 'ocr']);
+        Route::post('/detect', [ImageController::class, 'detect']);
+    });
 
     // Audio: async transcription (queue) + job polling
     Route::post('/transcribe', [TranscriptionController::class, 'transcribe']);
