@@ -36,7 +36,12 @@ class PackController extends Controller
         ]);
 
         $file = $request->file('pack');
-        $packId = (string) preg_replace('/\.(tar\.gz|tgz|tar|zip)$/i', '', (string) $file->getClientOriginalName());
+
+        // Derive a display id from the upload name, but treat it as hostile input: take only the
+        // basename, strip the archive suffix, and allow nothing but safe filename characters — it
+        // ends up in the stored crunch.json, never in a filesystem path.
+        $base = preg_replace('/\.(tar\.gz|tgz|tar|zip)$/i', '', basename((string) $file->getClientOriginalName()));
+        $packId = trim((string) preg_replace('/[^A-Za-z0-9._-]/', '_', (string) $base), '_');
 
         $job = InferenceJob::create([
             'type' => 'pack',
@@ -44,7 +49,8 @@ class PackController extends Controller
             'model' => 'roll-pack-v1',
         ]);
 
-        $stored = $file->storeAs('packs', "{$job->id}-".$file->getClientOriginalName());
+        // Store under a server-generated name only — the client filename never touches the path.
+        $stored = $file->storeAs('packs', "{$job->id}-upload");
 
         ProcessPackJob::dispatch($job->id, storage_path("app/{$stored}"), $packId !== '' ? $packId : $job->uid);
 

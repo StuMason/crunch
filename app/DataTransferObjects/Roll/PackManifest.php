@@ -46,18 +46,21 @@ final readonly class PackManifest
         /** @var array<string, mixed>|null $mic */
         $mic = is_array($data['mic'] ?? null) ? $data['mic'] : null;
 
+        // The media/metadata filenames come from an untrusted manifest.json and are only ever
+        // joined onto the pack directory, so collapse each to a bare basename here — a manifest
+        // can never make `screen.mp4` resolve to `../../etc/passwd`.
         return new self(
             version: (string) ($data['version'] ?? '0'),
             fps: (int) ($data['fps'] ?? 30),
             t0: (float) ($data['t0'] ?? 0),
             durationMs: (float) ($data['durationMs'] ?? 0),
             display: self::normalizeDisplay($data['display'] ?? []),
-            screenFile: (string) ($screen['file'] ?? 'screen.mp4'),
-            cameraFile: $camera === null ? null : (string) ($camera['file'] ?? 'camera.mp4'),
-            micFile: $mic === null ? null : (string) ($mic['file'] ?? 'mic.m4a'),
+            screenFile: basename((string) ($screen['file'] ?? 'screen.mp4')),
+            cameraFile: $camera === null ? null : basename((string) ($camera['file'] ?? 'camera.mp4')),
+            micFile: $mic === null ? null : basename((string) ($mic['file'] ?? 'mic.m4a')),
             cameraSyncOffsetMs: (float) ($data['cameraSyncOffsetMs'] ?? 0),
             micSyncOffsetMs: (float) ($data['micSyncOffsetMs'] ?? 0),
-            metadataFile: isset($data['metadata']) ? (string) $data['metadata'] : null,
+            metadataFile: isset($data['metadata']) ? basename((string) $data['metadata']) : null,
         );
     }
 

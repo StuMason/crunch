@@ -39,8 +39,12 @@ final readonly class Pack
         return array_values(array_filter($this->events, fn (PackEvent $e): bool => $e->type === $type));
     }
 
+    /**
+     * Resolve a pack-relative filename to an absolute path INSIDE the pack directory.
+     * Defensive: only the basename is used, so a hostile value can never escape the directory.
+     */
     public function absolutePath(string $file): string
     {
-        return rtrim($this->directory, '/').'/'.ltrim($file, '/');
+        return rtrim($this->directory, '/').'/'.basename($file);
     }
 }

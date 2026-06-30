@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use App\DataTransferObjects\Roll\Pack;
+use App\DataTransferObjects\Roll\PackManifest;
 use App\Support\Roll\PackReader;
 
 /**
@@ -75,3 +76,20 @@ it('round-trips a transcript word time through the mic clock back to t_ms', func
 it('rejects a directory with no manifest', function () {
     (new PackReader)->read(fixturePath());
 })->throws(RuntimeException::class, 'manifest not found');
+
+it('neutralizes path traversal in untrusted manifest file fields', function () {
+    $m = PackManifest::fromArray([
+        'version' => 'x', 'fps' => 30, 't0' => 0, 'durationMs' => 1, 'display' => [],
+        'screen' => ['file' => '../../../etc/passwd', 'firstPTS' => 0],
+        'mic' => ['file' => '/etc/shadow', 'firstPTS' => 0],
+        'metadata' => '../evil.jsonl',
+    ]);
+
+    expect($m->screenFile)->toBe('passwd')
+        ->and($m->micFile)->toBe('shadow')
+        ->and($m->metadataFile)->toBe('evil.jsonl');
+
+    // and absolutePath can never escape the pack directory, even given a hostile value
+    $pack = new Pack('/var/packs/abc', $m, []);
+    expect($pack->absolutePath('../../etc/hosts'))->toBe('/var/packs/abc/hosts');
+});

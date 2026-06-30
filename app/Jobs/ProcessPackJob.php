@@ -77,18 +77,57 @@ class ProcessPackJob implements ShouldQueue
     {
         @mkdir($workDir, 0775, true);
 
+        $this->assertSafeArchive($archivePath);
+
         $result = Process::timeout(300)->run(['tar', '-xf', $archivePath, '-C', $workDir]);
         if (! $result->successful()) {
             throw new RuntimeException('Could not unpack roll pack archive: '.trim($result->errorOutput()));
         }
 
+        // Belt-and-braces: even with the pre-flight check, refuse to process a tree that contains
+        // any symlink (it could point ffmpeg/OCR at an arbitrary file on the host).
+        if (trim(Process::run(['find', $workDir, '-type', 'l'])->output()) !== '') {
+            throw new RuntimeException('Pack archive expanded to symlinks; refusing to process.');
+        }
+
+        $root = realpath($workDir);
         foreach ([$workDir.'/manifest.json', ...glob($workDir.'/*/manifest.json') ?: []] as $manifest) {
-            if (is_file($manifest)) {
-                return dirname($manifest);
+            $real = realpath($manifest);
+            if ($real !== false && $root !== false && str_starts_with($real, $root.'/')) {
+                return dirname($real);
             }
         }
 
         throw new RuntimeException('No manifest.json found in the uploaded pack archive.');
+    }
+
+    /**
+     * Reject a hostile archive BEFORE extracting it: no absolute paths, no `..` traversal, and
+     * no symlink/hardlink entries — any of which could write or read outside the work directory.
+     */
+    private function assertSafeArchive(string $archivePath): void
+    {
+        $listing = Process::timeout(60)->run(['tar', '-tvf', $archivePath]);
+        if (! $listing->successful()) {
+            throw new RuntimeException('Could not read the pack archive listing.');
+        }
+
+        foreach (preg_split('/\R/', $listing->output()) ?: [] as $line) {
+            if (trim($line) === '') {
+                continue;
+            }
+
+            if (in_array($line[0] ?? '-', ['l', 'h'], true)) {
+                throw new RuntimeException('Pack archive contains a link entry; refusing to process.');
+            }
+        }
+
+        foreach (preg_split('/\R/', Process::timeout(60)->run(['tar', '-tf', $archivePath])->output()) ?: [] as $name) {
+            $name = trim($name);
+            if ($name !== '' && (str_starts_with($name, '/') || preg_match('#(^|/)\.\.(/|$)#', $name))) {
+                throw new RuntimeException('Pack archive contains an unsafe path; refusing to process.');
+            }
+        }
     }
 
     private function cleanup(string $dir): void
