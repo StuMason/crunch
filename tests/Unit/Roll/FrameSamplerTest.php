@@ -3,6 +3,8 @@
 declare(strict_types=1);
 
 use App\DataTransferObjects\Roll\Pack;
+use App\DataTransferObjects\Roll\PackEvent;
+use App\DataTransferObjects\Roll\PackManifest;
 use App\Support\Roll\FrameSampler;
 use App\Support\Roll\PackReader;
 
@@ -42,4 +44,18 @@ it('keeps frame count modest — an index, not a per-frame dump', function () {
     $times = (new FrameSampler)->sample(samplerPack(), cadenceMs: 1000);
 
     expect(count($times))->toBeLessThan(40);
+});
+
+it('caps total frames on a long take instead of sampling at 1fps', function () {
+    // a 10-minute take would be ~650 frames at 1fps — must stay under the cap by widening cadence
+    $m = new PackManifest('x', 30, 0.0, 600_000.0, ['id' => 0, 'x' => 0, 'y' => 0, 'w' => 0, 'h' => 0], 'screen.mp4', null, null, 0.0, 0.0, 'metadata.jsonl');
+    $events = array_map(
+        fn (int $t) => new PackEvent('click', $t, 0, 0, 'left', null, null, [], []),
+        [1000, 90_000, 300_000, 540_000],
+    );
+
+    $times = (new FrameSampler)->sample(new Pack('/tmp', $m, $events), cadenceMs: 1000, maxFrames: 250);
+
+    expect(count($times))->toBeLessThanOrEqual(250)
+        ->and($times)->toContain(1000);   // an interaction far from any baseline tick survives
 });

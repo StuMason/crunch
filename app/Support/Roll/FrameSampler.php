@@ -21,11 +21,15 @@ use App\DataTransferObjects\Roll\Pack;
 class FrameSampler
 {
     /**
-     * @param  int  $cadenceMs  baseline gap between safety-net frames (default ~1 fps)
+     * @param  int  $cadenceMs  smallest baseline gap between safety-net frames (~1 fps)
      * @param  int  $mergeWithinMs  collapse timestamps closer than this into one frame
+     * @param  int  $maxFrames  hard cap on total frames — a 10-min take at 1 fps would mean
+     *                          ~650 sequential OCR calls and a wall of noisy spans, so the
+     *                          baseline cadence widens for long takes to stay under this.
+     *                          Interaction frames (the moments that matter) are always kept.
      * @return list<int> sorted, unique screen-clock t_ms to extract
      */
-    public function sample(Pack $pack, int $cadenceMs = 1000, int $mergeWithinMs = 200): array
+    public function sample(Pack $pack, int $cadenceMs = 1000, int $mergeWithinMs = 200, int $maxFrames = 250): array
     {
         $duration = (int) round($pack->manifest->durationMs);
 
@@ -34,7 +38,12 @@ class FrameSampler
             $times[] = $event->tMs;
         }
 
-        for ($t = 0; $t <= $duration; $t += $cadenceMs) {
+        // Reserve frames for interactions, spend the rest on a baseline whose cadence stretches
+        // to fit the budget — a long take samples sparsely instead of blowing the frame cap.
+        $budget = max(1, $maxFrames - count($times));
+        $effectiveCadence = max($cadenceMs, (int) ceil(max(1, $duration) / $budget));
+
+        for ($t = 0; $t <= $duration; $t += $effectiveCadence) {
             $times[] = $t;
         }
 
