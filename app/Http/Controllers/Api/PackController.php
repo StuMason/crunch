@@ -54,6 +54,10 @@ class PackController extends Controller
         // Resolve the absolute path via the disk (its root is storage/app/private here, not
         // storage/app), so the worker reads exactly where the upload landed.
         $stored = $file->storeAs('packs', "{$job->id}-upload");
+        if ($stored === false) {
+            $job->delete();
+            abort(500, 'Could not store the uploaded pack.');
+        }
 
         ProcessPackJob::dispatch($job->id, Storage::path($stored), $packId !== '' ? $packId : $job->uid);
 
