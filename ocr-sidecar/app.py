@@ -102,6 +102,55 @@ def _tesseract(path: str, psm: int) -> str:
     return pytesseract.image_to_string(Image.open(path), lang=TESS_LANG, config=f"--oem 3 --psm {psm}").strip()
 
 
+def _tesseract_words(path: str, psm: int, min_conf: float) -> list[dict]:
+    """Word-level OCR with per-word confidence + pixel box (tesseract TSV via image_to_data).
+
+    This is what makes the `roll` join trustworthy: tesseract emits a confidence for every
+    word, so we keep the clean reads ("85% fewer tokens") and drop the garble ("7yreScrist")
+    rather than dumping the whole noisy frame. Boxes are in image-pixel space — and roll now
+    emits click/cursor coords in that SAME space — so a click resolves to the exact word under
+    it downstream. `line` groups words back into reading-order lines."""
+    import pytesseract
+
+    data = pytesseract.image_to_data(
+        Image.open(path), lang=TESS_LANG, config=f"--oem 3 --psm {psm}",
+        output_type=pytesseract.Output.DICT,
+    )
+
+    words: list[dict] = []
+    for i in range(len(data["text"])):
+        text = (data["text"][i] or "").strip()
+        try:
+            conf = float(data["conf"][i])
+        except (TypeError, ValueError):
+            conf = -1.0
+        if not text or conf < min_conf:
+            continue
+        words.append({
+            "text": text,
+            "conf": round(conf, 1),
+            "box": [int(data["left"][i]), int(data["top"][i]), int(data["width"][i]), int(data["height"][i])],
+            "line": [int(data["block_num"][i]), int(data["par_num"][i]), int(data["line_num"][i])],
+        })
+    return words
+
+
+def _words_to_text(words: list[dict]) -> str:
+    """Reassemble confidence-filtered words into reading-order line text."""
+    lines: dict[tuple, list[dict]] = {}
+    for w in words:
+        lines.setdefault(tuple(w["line"]), []).append(w)
+
+    ordered = sorted(lines.values(), key=lambda ws: min(x["box"][1] for x in ws))
+    out = []
+    for ws in ordered:
+        ws.sort(key=lambda x: x["box"][0])
+        line = " ".join(x["text"] for x in ws).strip()
+        if line:
+            out.append(line)
+    return "\n".join(out)
+
+
 def _paddle_ocr(path: str) -> str:
     """Run PaddleOCR and reassemble the detected lines into reading order. Paddle returns
     boxes in detection order, which scrambles multi-column text — sort top-to-bottom,
@@ -160,5 +209,40 @@ async def ocr(
         return {"engine": engine, "text": text, "model": model, "infer_secs": round(infer, 3)}
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"{engine} OCR failed: {exc}") from exc
+    finally:
+        os.unlink(path)
+
+
+@app.post("/ocr/words")
+async def ocr_words(
+    image: UploadFile = File(...),
+    psm: int | None = Form(None),
+    min_conf: float | None = Form(None),
+) -> dict:
+    """Word-level OCR (tesseract only): returns confidence-filtered words with pixel boxes plus
+    the reassembled reading-order text. Drives the roll join — boxes resolve a click to the word
+    under it, and the confidence floor drops the dense-UI garble that plain `/ocr` returns."""
+    raw = await image.read()
+    try:
+        Image.open(io.BytesIO(raw)).verify()
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail=f"not a decodable image: {exc}") from exc
+
+    with tempfile.NamedTemporaryFile(suffix=os.path.splitext(image.filename or "")[1] or ".png", delete=False) as tmp:
+        tmp.write(raw)
+        path = tmp.name
+
+    try:
+        started = time.time()
+        words = _tesseract_words(path, psm if psm is not None else DEFAULT_PSM, min_conf if min_conf is not None else 50.0)
+        return {
+            "engine": "tesseract",
+            "words": words,
+            "text": _words_to_text(words),
+            "model": "tesseract",
+            "infer_secs": round(time.time() - started, 3),
+        }
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"tesseract word OCR failed: {exc}") from exc
     finally:
         os.unlink(path)
