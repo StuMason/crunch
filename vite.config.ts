@@ -27,8 +27,14 @@ export default defineConfig({
             },
         }),
         tailwindcss(),
+        // Wayfinder runs `php artisan wayfinder:generate` via Node's exec(), which caps the
+        // child's stderr at 1MB. In a production build container, PHP 8.4 + Symfony 8 boot
+        // emit a deprecation flood to stderr (>1MB) — local Herd suppresses it, the FrankenPHP
+        // image does not — overflowing the buffer and failing `vite build` with
+        // ERR_CHILD_PROCESS_STDIO_MAXBUFFER. The command writes its output to files, so its
+        // stderr is just log noise: discard it. (Redirect kept at the end of the command.)
         wayfinder({
-            formVariants: true,
+            command: 'php artisan wayfinder:generate --with-form 2>/dev/null',
         }),
     ],
 });
