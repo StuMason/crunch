@@ -93,7 +93,8 @@ return [
 
     /*
     |--------------------------------------------------------------------------
-    | Capability → model map (the LOCKED v2 set, verified on arm64 2026-06-20)
+    | Capability → model map (the LOCKED v2 set, verified on arm64 2026-06-20; ONNX models
+    | are arch-portable and the runtime lib is resolved per-arch, so this carries to x86_64/Netcup)
     |--------------------------------------------------------------------------
     | Every model is a one-line swap. `quantized:false` + an explicit
     | `model_filename` selects a specific single-file ONNX variant
