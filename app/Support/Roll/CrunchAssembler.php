@@ -25,6 +25,7 @@ use App\DataTransferObjects\Roll\Pack;
  * returns the output array. No I/O, so the whole join is unit-testable without sidecars.
  *
  * @phpstan-type OcrLine array{text: string, conf: float, box: array<int, int>}
+ * @phpstan-type Moment array{t_ms: int, kind: string, label: string, score: float, source: string}
  */
 class CrunchAssembler
 {
@@ -35,8 +36,46 @@ class CrunchAssembler
     private const TOP_CHROME_FRACTION = 0.03;
 
     /**
+     * Spoken cues that mark an editorially-interesting beat, with a score for how strong a signal
+     * each is. Matched on word boundaries against the transcript so an editor can jump to "the bit
+     * that matters" the presenter flagged out loud.
+     */
+    private const CUE_PHRASES = [
+        'pay attention' => 0.9,
+        'the important thing' => 0.9,
+        'the important part' => 0.9,
+        'the whole point' => 0.85,
+        'the best part' => 0.85,
+        "here's the thing" => 0.85,
+        'look at this' => 0.85,
+        'check this out' => 0.85,
+        'watch this' => 0.85,
+        'the magic' => 0.8,
+        'the point is' => 0.8,
+        'this is where' => 0.8,
+        "what's interesting" => 0.8,
+        'crucially' => 0.8,
+        'the trick' => 0.75,
+        'the cool' => 0.75,
+        "here's the" => 0.7,
+        'the key' => 0.7,
+        'notably' => 0.7,
+        'this is the' => 0.65,
+        'the real' => 0.6,
+    ];
+
+    /** Keep at most this many spoken-cue moments — an editorial shortlist, not every utterance. */
+    private const MAX_CUE_MOMENTS = 25;
+
+    /**
      * @param  array<int, list<OcrLine>>  $ocrLinesByFrame  screen-clock t_ms => OCR lines
      * @param  list<array{word: string, t_ms: int}>  $words  transcript words on the shared clock
+     * @return array<string, mixed> the crunch.json structure
+     */
+    /**
+     * @param  array<int, list<OcrLine>>  $ocrLinesByFrame  screen-clock t_ms => OCR lines
+     * @param  list<array{word: string, t_ms: int}>  $words  transcript words on the shared clock
+     * @param  list<Moment>  $prosodyMoments  emphasis/pause moments from {@see AudioProsody}
      * @return array<string, mixed> the crunch.json structure
      */
     public function assemble(
@@ -47,6 +86,7 @@ class CrunchAssembler
         int $saidWindowMs = 2500,
         int $spanGapMs = 2500,
         int $frameHeight = 0,
+        array $prosodyMoments = [],
     ): array {
         return [
             'pack_id' => $packId,
@@ -58,7 +98,7 @@ class CrunchAssembler
             ],
             'screen' => $this->textSpans($ocrLinesByFrame, $spanGapMs, $frameHeight),
             'events' => $this->events($pack, $ocrLinesByFrame, $words, $saidWindowMs, $frameHeight),
-            'moments' => $this->moments($pack),
+            'moments' => $this->moments($pack, $words, $prosodyMoments),
         ];
     }
 
@@ -166,25 +206,122 @@ class CrunchAssembler
     }
 
     /**
-     * Cheap, pre-detected edit landmarks. v1 = what telemetry alone gives: a labelled click and an
-     * app switch. (raised_voice / camera moments arrive with audio-prosody + MediaPipe in Phase 2.)
+     * Scored edit landmarks from every signal we have, merged onto one timeline so an editor can
+     * rank or threshold them. Each carries a `source`:
+     *  - `telemetry`: a labelled click or an app switch (what the OS told us).
+     *  - `transcript`: a spoken cue the presenter flagged out loud ("the important thing is…").
+     *  - `audio`: vocal emphasis (loudness peaks) and pauses (cut points), from {@see AudioProsody}.
      *
-     * @return list<array{t_ms: int, kind: string, label: string, score: float}>
+     * @param  list<array{word: string, t_ms: int}>  $words
+     * @param  list<Moment>  $prosodyMoments
+     * @return list<Moment>
      */
-    private function moments(Pack $pack): array
+    private function moments(Pack $pack, array $words, array $prosodyMoments): array
     {
         $moments = [];
         foreach ($pack->interactions() as $event) {
             if ($event->type === 'click' && ($label = $event->axLabel()) !== null) {
-                $moments[] = ['t_ms' => $event->tMs, 'kind' => 'click_on', 'label' => $label, 'score' => 0.9];
+                $moments[] = ['t_ms' => $event->tMs, 'kind' => 'click_on', 'label' => $label, 'score' => 0.9, 'source' => 'telemetry'];
             } elseif ($event->type === 'app_focus' && $event->app !== null) {
-                $moments[] = ['t_ms' => $event->tMs, 'kind' => 'app_switch', 'label' => $event->app, 'score' => 1.0];
+                $moments[] = ['t_ms' => $event->tMs, 'kind' => 'app_switch', 'label' => $event->app, 'score' => 1.0, 'source' => 'telemetry'];
             }
         }
+
+        $moments = array_merge($moments, $this->transcriptMoments($words), $prosodyMoments);
 
         usort($moments, fn (array $a, array $b): int => $a['t_ms'] <=> $b['t_ms']);
 
         return $moments;
+    }
+
+    /**
+     * Spoken-cue moments: scan the transcript for the editorial cue phrases the presenter says out
+     * loud and emit a scored moment at each (word-boundary matched, deduped to the strongest cue
+     * within a beat, capped to a shortlist).
+     *
+     * @param  list<array{word: string, t_ms: int}>  $words
+     * @return list<Moment>
+     */
+    private function transcriptMoments(array $words): array
+    {
+        if ($words === []) {
+            return [];
+        }
+
+        // Build the lowercased transcript with a char-offset => t_ms map for each word start.
+        $text = '';
+        /** @var array<int, int> $offsets */
+        $offsets = [];
+        foreach ($words as $w) {
+            $offsets[strlen($text)] = $w['t_ms'];
+            $text .= mb_strtolower(trim($w['word'])).' ';
+        }
+
+        $moments = [];
+        foreach (self::CUE_PHRASES as $phrase => $score) {
+            $from = 0;
+            while (($pos = strpos($text, $phrase, $from)) !== false) {
+                $from = $pos + strlen($phrase);
+                $before = $pos === 0 || $text[$pos - 1] === ' ';
+                $after = $from >= strlen($text) || $text[$from] === ' ';
+                if ($before && $after) {
+                    $moments[] = [
+                        't_ms' => $this->tMsAtOffset($offsets, $pos),
+                        'kind' => 'cue_phrase',
+                        'label' => $phrase,
+                        'score' => $score,
+                        'source' => 'transcript',
+                    ];
+                }
+            }
+        }
+
+        return $this->topCueMoments($moments);
+    }
+
+    /**
+     * Keep the strongest cue per beat (collapse cues landing within a second of each other) and cap
+     * the shortlist.
+     *
+     * @param  list<Moment>  $moments
+     * @return list<Moment>
+     */
+    private function topCueMoments(array $moments): array
+    {
+        usort($moments, fn (array $a, array $b): int => $b['score'] <=> $a['score'] ?: $a['t_ms'] <=> $b['t_ms']);
+
+        $kept = [];
+        foreach ($moments as $m) {
+            foreach ($kept as $k) {
+                if (abs($k['t_ms'] - $m['t_ms']) <= 1000) {
+                    continue 2;
+                }
+            }
+            $kept[] = $m;
+            if (count($kept) >= self::MAX_CUE_MOMENTS) {
+                break;
+            }
+        }
+
+        return $kept;
+    }
+
+    /**
+     * The t_ms of the word containing a char offset — the latest word-start at or before it.
+     *
+     * @param  array<int, int>  $offsets  char offset => t_ms (ascending insertion order)
+     */
+    private function tMsAtOffset(array $offsets, int $pos): int
+    {
+        $best = 0;
+        foreach ($offsets as $offset => $tMs) {
+            if ($offset > $pos) {
+                break;
+            }
+            $best = $tMs;
+        }
+
+        return $best;
     }
 
     /**

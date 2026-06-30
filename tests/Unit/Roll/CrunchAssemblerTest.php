@@ -112,5 +112,36 @@ it('keeps ax.label as on_screen_text and emits a click_on moment', function () {
 
     expect($out['events'][0]['on_screen_text'])->toBe('Deploy')
         ->and($out['events'][0]['ax'])->toMatchArray(['role' => 'AXButton', 'label' => 'Deploy'])
-        ->and($out['moments'])->toContain(['t_ms' => 3000, 'kind' => 'click_on', 'label' => 'Deploy', 'score' => 0.9]);
+        ->and($out['moments'])->toContain(['t_ms' => 3000, 'kind' => 'click_on', 'label' => 'Deploy', 'score' => 0.9, 'source' => 'telemetry']);
+});
+
+it('emits scored spoken-cue moments from the transcript on word boundaries', function () {
+    $words = [
+        ['word' => 'so', 't_ms' => 1000],
+        ['word' => 'the', 't_ms' => 1200],
+        ['word' => 'important', 't_ms' => 1400],
+        ['word' => 'thing', 't_ms' => 1600],
+        ['word' => 'is', 't_ms' => 1800],
+        ['word' => 'breathe', 't_ms' => 5000],   // contains "the" but must NOT match "the key"
+        ['word' => 'keys', 't_ms' => 5200],
+    ];
+
+    $moments = (new CrunchAssembler)->assemble(assemblerPack(), 'p', [], $words)['moments'];
+    $cues = array_values(array_filter($moments, fn ($m) => $m['source'] === 'transcript'));
+
+    expect($cues)->toHaveCount(1)
+        ->and($cues[0])->toMatchArray(['t_ms' => 1200, 'kind' => 'cue_phrase', 'label' => 'the important thing', 'score' => 0.9]);
+});
+
+it('merges prosody moments into the timeline', function () {
+    $prosody = [
+        ['t_ms' => 7000, 'kind' => 'emphasis', 'label' => 'vocal emphasis', 'score' => 0.8, 'source' => 'audio'],
+        ['t_ms' => 9000, 'kind' => 'pause', 'label' => 'pause (1.2s)', 'score' => 0.4, 'source' => 'audio'],
+    ];
+
+    $moments = (new CrunchAssembler)->assemble(assemblerPack(), 'p', [], [], prosodyMoments: $prosody)['moments'];
+    $audio = array_values(array_filter($moments, fn ($m) => $m['source'] === 'audio'));
+
+    expect($audio)->toHaveCount(2)
+        ->and(array_column($moments, 't_ms'))->toBe(collect($moments)->pluck('t_ms')->sort()->values()->all());  // stays time-sorted
 });

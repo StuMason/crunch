@@ -8,6 +8,7 @@ use App\DataTransferObjects\Roll\Pack;
 use App\Inference\AsrClient;
 use App\Inference\OcrClient;
 use App\Jobs\ProcessPackJob;
+use App\Support\Roll\AudioProsody;
 use App\Support\Roll\CrunchAssembler;
 use App\Support\Roll\FrameExtractor;
 use App\Support\Roll\FrameSampler;
@@ -31,6 +32,7 @@ class ProcessPack
         private readonly FrameExtractor $extractor,
         private readonly OcrClient $ocr,
         private readonly AsrClient $asr,
+        private readonly AudioProsody $audioProsody,
         private readonly CrunchAssembler $assembler,
     ) {}
 
@@ -43,8 +45,35 @@ class ProcessPack
 
         [$ocrLinesByFrame, $frameHeight] = $this->ocrFrames($pack, rtrim($packDir, '/').'/_frames');
         $words = $this->transcribe($pack);
+        $prosodyMoments = $this->prosody($pack);
 
-        return $this->assembler->assemble($pack, $packId, $ocrLinesByFrame, $words, frameHeight: $frameHeight);
+        return $this->assembler->assemble(
+            $pack, $packId, $ocrLinesByFrame, $words,
+            frameHeight: $frameHeight,
+            prosodyMoments: $prosodyMoments,
+        );
+    }
+
+    /**
+     * Vocal-emphasis + pause moments from the mic track (best-effort — a missing or unreadable mic
+     * just yields no prosody moments).
+     *
+     * @return list<array{t_ms: int, kind: string, label: string, score: float, source: string}>
+     */
+    private function prosody(Pack $pack): array
+    {
+        if (! $pack->manifest->hasMic()) {
+            return [];
+        }
+
+        try {
+            return $this->audioProsody->analyze(
+                $pack->absolutePath((string) $pack->manifest->micFile),
+                (int) round($pack->manifest->micSyncOffsetMs),
+            );
+        } catch (Throwable) {
+            return [];
+        }
     }
 
     /**
