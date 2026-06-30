@@ -24,11 +24,12 @@ function ocrLine(string $text, int $x, int $y, int $w, int $h, float $conf = 90.
 it('builds the crunch.json envelope from a real pack', function () {
     $out = (new CrunchAssembler)->assemble(assemblerPack(), 'rec-test', [], []);
 
-    expect($out)->toHaveKeys(['pack_id', 'duration_ms', 'fps', 'transcript', 'screen', 'events', 'moments'])
+    expect($out)->toHaveKeys(['pack_id', 'duration_ms', 'fps', 'transcript', 'screen', 'events', 'moments', 'segments'])
         ->and($out['pack_id'])->toBe('rec-test')
         ->and($out['fps'])->toBe(30)
         ->and($out['events'])->toHaveCount(11)            // interactions only (cursor excluded)
-        ->and($out['moments'])->toHaveCount(4);           // 2 app_switch + 2 click_on
+        ->and($out['moments'])->toHaveCount(4)            // 2 app_switch + 2 click_on
+        ->and($out['segments'])->not->toBeEmpty();
 });
 
 it('dedupes on-screen text lines into time-spans, splitting on gaps', function () {

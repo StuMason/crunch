@@ -67,6 +67,8 @@ class CrunchAssembler
     /** Keep at most this many spoken-cue moments — an editorial shortlist, not every utterance. */
     private const MAX_CUE_MOMENTS = 25;
 
+    public function __construct(private readonly Segmenter $segmenter = new Segmenter) {}
+
     /**
      * @param  array<int, list<OcrLine>>  $ocrLinesByFrame  screen-clock t_ms => OCR lines
      * @param  list<array{word: string, t_ms: int}>  $words  transcript words on the shared clock
@@ -88,9 +90,12 @@ class CrunchAssembler
         int $frameHeight = 0,
         array $prosodyMoments = [],
     ): array {
+        $durationMs = (int) round($pack->manifest->durationMs);
+        $moments = $this->moments($pack, $words, $prosodyMoments);
+
         return [
             'pack_id' => $packId,
-            'duration_ms' => (int) round($pack->manifest->durationMs),
+            'duration_ms' => $durationMs,
             'fps' => $pack->manifest->fps,
             'transcript' => [
                 'text' => trim(implode(' ', array_column($words, 'word'))),
@@ -98,7 +103,8 @@ class CrunchAssembler
             ],
             'screen' => $this->textSpans($ocrLinesByFrame, $spanGapMs, $frameHeight),
             'events' => $this->events($pack, $ocrLinesByFrame, $words, $saidWindowMs, $frameHeight),
-            'moments' => $this->moments($pack, $words, $prosodyMoments),
+            'moments' => $moments,
+            'segments' => $this->segmenter->segment($durationMs, $pack->interactions(), $words, $moments),
         ];
     }
 
