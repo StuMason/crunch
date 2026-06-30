@@ -24,7 +24,10 @@ from faster_whisper import WhisperModel
 MODEL = os.environ.get("ASR_MODEL", "large-v3-turbo")
 DEVICE = os.environ.get("ASR_DEVICE", "cpu")
 COMPUTE_TYPE = os.environ.get("ASR_COMPUTE_TYPE", "int8")
-CPU_THREADS = int(os.environ.get("ASR_THREADS", "0"))  # 0 = use all cores (turbo is small)
+# 0 lets CTranslate2 pick its own default (a hardware heuristic, NOT "all cores"). In prod
+# this is pinned low (ASR_THREADS=6 in docker-compose) + a hard Docker cpus limit, so a
+# transcribe can't peg every core and starve the other apps sharing the box.
+CPU_THREADS = int(os.environ.get("ASR_THREADS", "0"))
 BEAM_SIZE = int(os.environ.get("ASR_BEAM_SIZE", "5"))
 # large-v3-turbo via faster-whisper otherwise emits all-lowercase, unpunctuated text.
 # Seeding the decoder with a short, punctuated prompt restores normal casing and

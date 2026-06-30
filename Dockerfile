@@ -1,5 +1,6 @@
 # syntax=docker/dockerfile:1
-# crunch — FrankenPHP/Octane + transformers-php (ONNX via FFI). Multi-arch (arm64 target).
+# crunch — FrankenPHP/Octane + transformers-php (ONNX via FFI). Multi-arch; built on x86_64
+# (Netcup) — the transformers plugin resolves the matching ONNX Runtime native lib per build arch.
 # Single stage: the Wayfinder Vite plugin shells out to `php artisan` during the asset
 # build, so PHP + Node must coexist at build time. node_modules is pruned afterwards.
 
@@ -29,7 +30,8 @@ COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
 WORKDIR /app
 
 COPY . .
-# composer install also pulls the arm64 ONNX Runtime via the transformers plugin.
+# composer install also pulls the ONNX Runtime native lib for the build arch (x86_64 here)
+# via the transformers plugin.
 # Retry composer: it fetches dist zips from codeload.github.com, which intermittently
 # returns HTTP 400 on a handful of packages per build (transient, per-request). Without
 # a retry a single flaky download fails the whole image build. 5 attempts clears it.

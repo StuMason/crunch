@@ -67,10 +67,15 @@ services:
     environment:
       ASR_MODEL: large-v3-turbo    # verbatim CrisperWhisper needs a GPU; turbo is the CPU answer
       ASR_COMPUTE_TYPE: int8
-      # Use all 16 cores (CAX41). cpu_threads defaults conservatively otherwise; the PHP
-      # queue runs ONE transcribe at a time so a job can have the whole box briefly.
-      ASR_THREADS: "16"
+      # The Netcup x86 box is SHARED with ~18 other apps incl. revenue client sites. A
+      # transcribe must NOT be able to peg every core, so cap threads here AND enforce a
+      # hard CPU limit below — belt and braces. 6 of 12 vCPU leaves the web apps responsive.
+      ASR_THREADS: "6"
       HF_HOME: /models
+    deploy:
+      resources:
+        limits:
+          cpus: "6"                # hard ceiling so a busy transcribe can't starve the box
     volumes:
       - asr_models:/models         # HF cache — persists the model download
     networks:
