@@ -10,6 +10,7 @@ use App\Models\InferenceJob;
 use App\Support\JobPresenter;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Storage;
 
 class PackController extends Controller
 {
@@ -50,9 +51,15 @@ class PackController extends Controller
         ]);
 
         // Store under a server-generated name only — the client filename never touches the path.
+        // Resolve the absolute path via the disk (its root is storage/app/private here, not
+        // storage/app), so the worker reads exactly where the upload landed.
         $stored = $file->storeAs('packs', "{$job->id}-upload");
+        if ($stored === false) {
+            $job->delete();
+            abort(500, 'Could not store the uploaded pack.');
+        }
 
-        ProcessPackJob::dispatch($job->id, storage_path("app/{$stored}"), $packId !== '' ? $packId : $job->uid);
+        ProcessPackJob::dispatch($job->id, Storage::path($stored), $packId !== '' ? $packId : $job->uid);
 
         return response()->json(JobPresenter::present($job), 202);
     }
