@@ -10,29 +10,31 @@ use App\DataTransferObjects\Roll\Pack;
  * Assembles the lean `crunch.json` an editing agent reads — the join of
  * `event × on-screen-text × words-said` on the pack's shared clock.
  *
- * Design rules (from the roll-mac review):
- *  - It is an INDEX, not a data dump. Persistent on-screen text is deduped into time-spans
- *    ({text, t_start, t_end}), never one row per frame; cursor rows never appear; no embeddings.
- *  - "What was interacted with" prefers the OS accessibility label (`ax.label`) — a direct
- *    measurement of the clicked element — and only falls back to OCR. (Full-frame OCR gives no
- *    per-element boxes, so point-precise OCR fallback waits for box-level OCR; for now the
- *    surrounding on-screen-text is queryable via the `screen` spans around the event's t_ms.)
- *  - Only facts + cheap moments. No cut decisions — that stays with the agent.
+ * Works from word-level OCR (each word with a confidence and a pixel box), which is what makes
+ * the screen side trustworthy:
+ *  - `screen` spans are built from confidence-filtered reading-order lines, deduped into
+ *    {text, t_start, t_end} time-spans — an index of what was on screen when, not a per-frame dump.
+ *  - `ocr_at_click` resolves a click to the exact line under the cursor. roll now emits click
+ *    coords in screen.mp4 pixel space (the same space as the OCR boxes), so the lookup is direct.
+ *  - `on_screen_text` stays the OS accessibility label (stable for downstream bindings); the new
+ *    pixel-precise text rides alongside it as `ocr_at_click`.
  *
- * Pure: takes already-computed OCR text per frame and transcript words (on the shared clock),
+ * Pure: takes already-computed OCR words per frame + transcript words (on the shared clock),
  * returns the output array. No I/O, so the whole join is unit-testable without sidecars.
+ *
+ * @phpstan-type OcrWord array{text: string, conf: float, box: array<int, int>, line: array<int, int>}
  */
 class CrunchAssembler
 {
     /**
-     * @param  array<int, string>  $ocrByFrame  screen-clock t_ms => full-frame OCR text
+     * @param  array<int, list<OcrWord>>  $ocrWordsByFrame  screen-clock t_ms => confidence-filtered OCR words
      * @param  list<array{word: string, t_ms: int}>  $words  transcript words on the shared clock
      * @return array<string, mixed> the crunch.json structure
      */
     public function assemble(
         Pack $pack,
         string $packId,
-        array $ocrByFrame,
+        array $ocrWordsByFrame,
         array $words,
         int $saidWindowMs = 2500,
         int $spanGapMs = 2500,
@@ -45,28 +47,28 @@ class CrunchAssembler
                 'text' => trim(implode(' ', array_column($words, 'word'))),
                 'words' => $words,
             ],
-            'screen' => $this->textSpans($ocrByFrame, $spanGapMs),
-            'events' => $this->events($pack, $words, $saidWindowMs),
+            'screen' => $this->textSpans($ocrWordsByFrame, $spanGapMs),
+            'events' => $this->events($pack, $ocrWordsByFrame, $words, $saidWindowMs),
             'moments' => $this->moments($pack),
         ];
     }
 
     /**
-     * Collapse per-frame OCR into deduped on-screen-text spans. Each distinct line of text
-     * becomes one or more {text, t_start, t_end} spans — a line seen across consecutive frames
-     * is one span; if it disappears for longer than $gapMs and returns, that's a new span.
+     * Collapse per-frame OCR lines into deduped on-screen-text spans. Each distinct line becomes
+     * one or more {text, t_start, t_end} spans — seen across consecutive frames = one span; gone
+     * for longer than $gapMs then back = a new span.
      *
-     * @param  array<int, string>  $ocrByFrame
+     * @param  array<int, list<OcrWord>>  $ocrWordsByFrame
      * @return list<array{text: string, t_start: int, t_end: int}>
      */
-    private function textSpans(array $ocrByFrame, int $gapMs): array
+    private function textSpans(array $ocrWordsByFrame, int $gapMs): array
     {
-        ksort($ocrByFrame);
+        ksort($ocrWordsByFrame);
 
         /** @var array<string, array{display: string, times: list<int>}> $byLine */
         $byLine = [];
-        foreach ($ocrByFrame as $tMs => $blob) {
-            foreach ($this->lines($blob) as $line) {
+        foreach ($ocrWordsByFrame as $tMs => $frameWords) {
+            foreach ($this->frameLines($frameWords) as $line) {
                 $key = mb_strtolower($line);
                 $byLine[$key] ??= ['display' => $line, 'times' => []];
                 $byLine[$key]['times'][] = (int) $tMs;
@@ -94,13 +96,15 @@ class CrunchAssembler
     }
 
     /**
-     * The join: one row per interaction (cursor noise already excluded), carrying what was
-     * clicked (ax.label first) and what was being said around it.
+     * The join: one row per interaction, carrying the accessibility label of what was clicked
+     * (`on_screen_text`), the pixel-precise OCR line under the cursor (`ocr_at_click`), and the
+     * words said around it.
      *
+     * @param  array<int, list<OcrWord>>  $ocrWordsByFrame
      * @param  list<array{word: string, t_ms: int}>  $words
      * @return list<array<string, mixed>>
      */
-    private function events(Pack $pack, array $words, int $saidWindowMs): array
+    private function events(Pack $pack, array $ocrWordsByFrame, array $words, int $saidWindowMs): array
     {
         $rows = [];
         foreach ($pack->interactions() as $event) {
@@ -125,6 +129,13 @@ class CrunchAssembler
                 $row['on_screen_text'] = $label;
             }
 
+            if ($event->x !== null && $event->y !== null) {
+                $clicked = $this->lineUnderPoint($ocrWordsByFrame, $event->tMs, $event->x, $event->y);
+                if ($clicked !== null) {
+                    $row['ocr_at_click'] = $clicked;
+                }
+            }
+
             $said = $this->saidAround($words, $event->tMs, $saidWindowMs);
             if ($said !== '') {
                 $row['said'] = $said;
@@ -137,9 +148,8 @@ class CrunchAssembler
     }
 
     /**
-     * Cheap, pre-detected edit landmarks the agent shouldn't have to scan for. v1 = what we can
-     * derive from telemetry alone: a click on a labelled element, and an app switch. (raised_voice
-     * / camera moments arrive with the audio-prosody + MediaPipe work in Phase 2.)
+     * Cheap, pre-detected edit landmarks. v1 = what telemetry alone gives: a labelled click and an
+     * app switch. (raised_voice / camera moments arrive with audio-prosody + MediaPipe in Phase 2.)
      *
      * @return list<array{t_ms: int, kind: string, label: string, score: float}>
      */
@@ -160,6 +170,97 @@ class CrunchAssembler
     }
 
     /**
+     * The reading-order OCR line under a point, taken from the frame AT that t_ms (interactions are
+     * always sampled, so the exact frame usually exists) or the nearest frame otherwise. Returns null
+     * if no word box covers the point.
+     *
+     * @param  array<int, list<OcrWord>>  $ocrWordsByFrame
+     */
+    private function lineUnderPoint(array $ocrWordsByFrame, int $tMs, int $x, int $y): ?string
+    {
+        $frameWords = $ocrWordsByFrame[$tMs] ?? $this->nearestFrameWords($ocrWordsByFrame, $tMs);
+        if ($frameWords === null) {
+            return null;
+        }
+
+        $hitLine = null;
+        foreach ($frameWords as $w) {
+            [$bx, $by, $bw, $bh] = $w['box'];
+            if ($x >= $bx && $x <= $bx + $bw && $y >= $by && $y <= $by + $bh) {
+                $hitLine = $w['line'];
+                break;
+            }
+        }
+
+        if ($hitLine === null) {
+            return null;
+        }
+
+        $line = array_values(array_filter($frameWords, fn (array $w): bool => $w['line'] === $hitLine));
+        usort($line, fn (array $a, array $b): int => $a['box'][0] <=> $b['box'][0]);
+        $text = trim(implode(' ', array_column($line, 'text')));
+
+        return $text !== '' ? $text : null;
+    }
+
+    /**
+     * @param  array<int, list<OcrWord>>  $ocrWordsByFrame
+     * @return list<OcrWord>|null
+     */
+    private function nearestFrameWords(array $ocrWordsByFrame, int $tMs): ?array
+    {
+        $bestKey = null;
+        $bestDist = PHP_INT_MAX;
+        foreach (array_keys($ocrWordsByFrame) as $f) {
+            $d = abs($f - $tMs);
+            if ($d < $bestDist) {
+                $bestDist = $d;
+                $bestKey = $f;
+            }
+        }
+
+        return $bestKey === null ? null : $ocrWordsByFrame[$bestKey];
+    }
+
+    /**
+     * Group one frame's words into reading-order line strings (top-to-bottom, left-to-right).
+     *
+     * @param  list<OcrWord>  $frameWords
+     * @return list<string>
+     */
+    private function frameLines(array $frameWords): array
+    {
+        /** @var array<string, list<OcrWord>> $lines */
+        $lines = [];
+        foreach ($frameWords as $w) {
+            $lines[implode(':', $w['line'])][] = $w;
+        }
+
+        uasort($lines, fn (array $a, array $b): int => $this->topEdge($a) <=> $this->topEdge($b));
+
+        $out = [];
+        foreach ($lines as $lineWords) {
+            usort($lineWords, fn (array $a, array $b): int => $a['box'][0] <=> $b['box'][0]);
+            $line = trim(implode(' ', array_column($lineWords, 'text')));
+            if (mb_strlen($line) > 1) {
+                $out[] = $line;
+            }
+        }
+
+        return $out;
+    }
+
+    /**
+     * @param  list<OcrWord>  $lineWords
+     */
+    private function topEdge(array $lineWords): int
+    {
+        $tops = array_map(fn (array $w): int => $w['box'][1], $lineWords);
+
+        return $tops === [] ? 0 : min($tops);
+    }
+
+    /**
      * Transcript words whose time falls within ±$windowMs of an event, joined into a phrase.
      *
      * @param  list<array{word: string, t_ms: int}>  $words
@@ -169,23 +270,5 @@ class CrunchAssembler
         $near = array_filter($words, fn (array $w): bool => abs($w['t_ms'] - $tMs) <= $windowMs);
 
         return trim(implode(' ', array_column($near, 'word')));
-    }
-
-    /**
-     * Split an OCR blob into clean, de-duplicated lines worth indexing.
-     *
-     * @return list<string>
-     */
-    private function lines(string $blob): array
-    {
-        $lines = [];
-        foreach (preg_split('/\R/', $blob) ?: [] as $line) {
-            $line = trim((string) preg_replace('/\s+/', ' ', $line));
-            if ($line !== '' && mb_strlen($line) > 1) {
-                $lines[$line] = $line;   // dedupe repeated lines within one frame
-            }
-        }
-
-        return array_values($lines);
     }
 }
