@@ -6,6 +6,7 @@ use App\Http\Controllers\Api\EmbeddingController;
 use App\Http\Controllers\Api\ImageController;
 use App\Http\Controllers\Api\JobController;
 use App\Http\Controllers\Api\OcrBatchController;
+use App\Http\Controllers\Api\PackController;
 use App\Http\Controllers\Api\TextController;
 use App\Http\Controllers\Api\TranscriptionController;
 use App\Http\Middleware\CrunchAuth;
@@ -46,6 +47,10 @@ Route::middleware(CrunchAuth::class)->group(function () {
     // Batch OCR: many crops in one async job, drained within the vision inflight cap (the
     // submit is cheap — it just persists + queues — so it doesn't need the LimitInflight guard).
     Route::post('/ocr/batch', [OcrBatchController::class, 'store']);
+
+    // Roll pack: upload a take archive, get back the joined crunch.json (async). Submit just
+    // persists + queues; the heavy frames/OCR/transcribe pipeline runs on the queue worker.
+    Route::post('/pack', [PackController::class, 'store']);
 
     // Poll any async job (transcribe, ocr-batch) by id.
     Route::get('/jobs/{job}', [JobController::class, 'show']);

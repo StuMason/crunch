@@ -39,7 +39,7 @@ return Application::configure(basePath: dirname(__DIR__))
             fn (Request $request) => $request->is(
                 'api/*', 'v1/*', 'embed', 'rerank', 'sentiment',
                 'moderate', 'caption', 'ocr', 'ocr/*', 'detect',
-                'classify-image', 'transcribe', 'jobs/*',
+                'classify-image', 'transcribe', 'pack', 'jobs/*',
             ),
         );
     })->create();

@@ -1,0 +1,28 @@
+{
+  "durationMs" : 18364.09042699961,
+  "display" : {
+    "w" : 2560,
+    "y" : 0,
+    "h" : 1440,
+    "x" : 2560,
+    "id" : 724070547
+  },
+  "mic" : {
+    "file" : "mic.m4a",
+    "firstPTS" : 306069.53441666666
+  },
+  "version" : "0.0.14",
+  "screen" : {
+    "firstPTS" : 306069.49669022002,
+    "file" : "screen.mp4"
+  },
+  "cameraSyncOffsetMs" : 4.6997799654491246,
+  "fps" : 30,
+  "t0" : 306069.49669022002,
+  "camera" : {
+    "file" : "camera.mp4",
+    "firstPTS" : 306069.50138999999
+  },
+  "micSyncOffsetMs" : 37.72644663695246,
+  "metadata" : "metadata.jsonl"
+}
