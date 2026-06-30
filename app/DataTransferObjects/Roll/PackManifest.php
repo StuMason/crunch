@@ -57,9 +57,7 @@ final readonly class PackManifest
             micFile: $mic === null ? null : (string) ($mic['file'] ?? 'mic.m4a'),
             cameraSyncOffsetMs: (float) ($data['cameraSyncOffsetMs'] ?? 0),
             micSyncOffsetMs: (float) ($data['micSyncOffsetMs'] ?? 0),
-            metadataFile: isset($data['metadata']) && $data['metadata'] !== null
-                ? (string) $data['metadata']
-                : null,
+            metadataFile: isset($data['metadata']) ? (string) $data['metadata'] : null,
         );
     }
 

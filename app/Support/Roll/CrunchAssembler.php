@@ -43,7 +43,7 @@ class CrunchAssembler
             'fps' => $pack->manifest->fps,
             'transcript' => [
                 'text' => trim(implode(' ', array_column($words, 'word'))),
-                'words' => array_values($words),
+                'words' => $words,
             ],
             'screen' => $this->textSpans($ocrByFrame, $spanGapMs),
             'events' => $this->events($pack, $words, $saidWindowMs),

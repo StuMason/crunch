@@ -59,6 +59,7 @@ class JobPresenter
 
         return match ($job->type) {
             'ocr-batch' => self::ocrBatchResult($job),
+            'pack' => $job->result,   // the assembled crunch.json — already its final shape
             default => self::transcriptionResult($job),
         };
     }
