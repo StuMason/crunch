@@ -135,6 +135,14 @@ return [
             'quantized' => false,
             'top_k' => -1, // -1 = return ALL categories (not just the top one) for a full moderation breakdown
         ],
+        'summarize' => [
+            // Abstractive summarisation, CPU-only via transformers-php (no GPU, no generative LLM).
+            // distilbart-cnn-6-6 is small and fast-ish on CPU — "fun to play with", not SOTA prose.
+            // One-line swap if a better small ONNX seq2seq turns up.
+            'kind' => 'pipeline',
+            'task' => 'summarization',
+            'model' => 'Xenova/distilbart-cnn-6-6',
+        ],
         'classify-image' => [
             'kind' => 'pipeline',
             'task' => 'zero-shot-image-classification',

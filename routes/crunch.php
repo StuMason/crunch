@@ -29,6 +29,7 @@ Route::middleware(CrunchAuth::class)->group(function () {
     Route::post('/rerank', [TextController::class, 'rerank']);
     Route::post('/sentiment', [TextController::class, 'sentiment']);
     Route::post('/moderate', [TextController::class, 'moderate']);
+    Route::post('/summarize', [TextController::class, 'summarize']);
 
     // Image: zero-shot classification runs in-process (CLIP), so it scales with workers.
     Route::post('/classify-image', [ImageController::class, 'classify']);

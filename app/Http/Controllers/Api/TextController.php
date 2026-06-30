@@ -6,6 +6,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Actions\Inference\ClassifyText;
 use App\Actions\Inference\Rerank;
+use App\Actions\Inference\Summarize;
 use App\Http\Controllers\Controller;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -87,6 +88,27 @@ class TextController extends Controller
             'id' => 'modr-'.Str::lower((string) Str::ulid()),
             'model' => config('crunch.models.moderate.model'),
             'results' => [$this->moderationResult($scores)],
+        ]);
+    }
+
+    /**
+     * Summarise text
+     *
+     * Abstractive summarisation on CPU (small distilbart model, no GPU) — a quick gist of a longer
+     * passage. Rough and ready, not polished prose: handy for tagging or a first-pass TL;DR.
+     *
+     * **Send:** `inputs` — the text to summarise.
+     * **Get back:** `summary` — the one-paragraph gist.
+     */
+    public function summarize(Request $request, Summarize $summarize): JsonResponse
+    {
+        $validated = $request->validate([
+            'inputs' => ['required', 'string'],
+        ]);
+
+        return response()->json([
+            'model' => config('crunch.models.summarize.model'),
+            'summary' => $summarize->handle($validated['inputs']),
         ]);
     }
 

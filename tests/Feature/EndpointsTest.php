@@ -8,6 +8,7 @@ use App\Actions\Inference\ClassifyText;
 use App\Actions\Inference\DetectObjects;
 use App\Actions\Inference\Ocr;
 use App\Actions\Inference\Rerank;
+use App\Actions\Inference\Summarize;
 use App\Actions\Inference\Transcribe;
 use App\Jobs\TranscribeJob;
 use App\Models\InferenceJob;
@@ -43,6 +44,17 @@ it('classifies sentiment', function () {
         ->postJson('/sentiment', ['inputs' => 'lovely'])
         ->assertOk()
         ->assertJsonPath('results.0.label', 'admiration');
+});
+
+it('summarises text', function () {
+    $this->mock(Summarize::class)->shouldReceive('handle')
+        ->with('a very long passage about crunch and rolls and editing')
+        ->andReturn('crunch turns rolls into an editable index');
+
+    $this->withToken('test-key')
+        ->postJson('/summarize', ['inputs' => 'a very long passage about crunch and rolls and editing'])
+        ->assertOk()
+        ->assertJsonPath('summary', 'crunch turns rolls into an editable index');
 });
 
 it('moderates content (OpenAI moderations shape)', function () {
