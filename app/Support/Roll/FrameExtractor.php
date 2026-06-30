@@ -19,6 +19,11 @@ use Illuminate\Support\Facades\Process;
  * rather than shrinking a normal capture. (The aggressive downscale in crunch #11 was for the
  * Florence-2 *vision* sidecar, which is a different, generative path — not this OCR one.)
  *
+ * Frames are written as lossless PNG, not JPEG: JPEG ringing artifacts around sharp anti-aliased
+ * UI text measurably corrupt the OCR (a clean "x402" reads as "x42", and ringing invents stray
+ * leading quotes) — proven side-by-side on a real pack frame. PNG is ~2x the temp-file size but
+ * the frames are transient and the accuracy gain is large.
+ *
  * One ffmpeg invocation per frame with a fast pre-input seek; a frame that fails to extract is
  * skipped (logged by the caller) rather than sinking the whole job.
  */
@@ -31,7 +36,7 @@ class FrameExtractor
 
     /**
      * @param  list<int>  $timesMs
-     * @return array<int, string> t_ms => absolute path of the extracted JPEG (only successful frames)
+     * @return array<int, string> t_ms => absolute path of the extracted PNG (only successful frames)
      */
     public function extract(Pack $pack, array $timesMs, string $workDir): array
     {
@@ -41,7 +46,7 @@ class FrameExtractor
         $frames = [];
         foreach ($timesMs as $tMs) {
             $seconds = $pack->manifest->screenSecondsAt($tMs);
-            $out = rtrim($workDir, '/')."/frame_{$tMs}.jpg";
+            $out = rtrim($workDir, '/')."/frame_{$tMs}.png";
 
             $result = Process::run([
                 $this->ffmpeg, '-hide_banner', '-loglevel', 'error', '-y',

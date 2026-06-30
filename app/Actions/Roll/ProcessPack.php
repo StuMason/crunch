@@ -41,28 +41,31 @@ class ProcessPack
     {
         $pack = $this->reader->read($packDir);
 
-        $ocrWordsByFrame = $this->ocrFrames($pack, rtrim($packDir, '/').'/_frames');
+        [$ocrLinesByFrame, $frameHeight] = $this->ocrFrames($pack, rtrim($packDir, '/').'/_frames');
         $words = $this->transcribe($pack);
 
-        return $this->assembler->assemble($pack, $packId, $ocrWordsByFrame, $words);
+        return $this->assembler->assemble($pack, $packId, $ocrLinesByFrame, $words, frameHeight: $frameHeight);
     }
 
     /**
-     * Extract the sampled screen frames and word-OCR each one (tesseract TSV, confidence-filtered).
-     * Returns t_ms => the frame's OCR words (with pixel boxes), dropping frames that read nothing.
+     * Extract the sampled screen frames and line-OCR each one (tesseract, line-level). Returns a
+     * tuple of [t_ms => the frame's OCR lines (text + pixel box), frame pixel height] — the height
+     * lets the assembler discard the top-of-frame OS chrome. Frames that read nothing are dropped.
      *
-     * @return array<int, list<array{text: string, conf: float, box: array<int, int>, line: array<int, int>}>>
+     * @return array{0: array<int, list<array{text: string, conf: float, box: array<int, int>}>>, 1: int}
      */
     private function ocrFrames(Pack $pack, string $workDir): array
     {
         $frames = $this->extractor->extract($pack, $this->sampler->sample($pack), $workDir);
 
-        $ocrWordsByFrame = [];
+        $ocrLinesByFrame = [];
+        $frameHeight = 0;
         foreach ($frames as $tMs => $path) {
             try {
-                $words = $this->ocr->words($path)['words'];
-                if ($words !== []) {
-                    $ocrWordsByFrame[$tMs] = $words;
+                $result = $this->ocr->lines($path);
+                $frameHeight = $frameHeight ?: $result['image_height'];
+                if ($result['lines'] !== []) {
+                    $ocrLinesByFrame[$tMs] = $result['lines'];
                 }
             } catch (Throwable) {
                 // A frame that won't OCR is dropped from the index, not fatal.
@@ -71,7 +74,7 @@ class ProcessPack
             }
         }
 
-        return $ocrWordsByFrame;
+        return [$ocrLinesByFrame, $frameHeight];
     }
 
     /**

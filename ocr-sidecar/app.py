@@ -18,6 +18,8 @@ service = isolated RAM, independent scaling, no contention with caption/detect.
 Contract:
     POST /ocr (multipart image, form: engine?, psm?) ->
       { engine, text, model, infer_secs }
+    POST /ocr/words (multipart image, form: psm?, min_conf?) ->   # tesseract, line-level
+      { engine, lines: [{ text, conf, box:[x,y,w,h] }], text, image_height, model, infer_secs }
 """
 
 from __future__ import annotations
@@ -102,14 +104,18 @@ def _tesseract(path: str, psm: int) -> str:
     return pytesseract.image_to_string(Image.open(path), lang=TESS_LANG, config=f"--oem 3 --psm {psm}").strip()
 
 
-def _tesseract_words(path: str, psm: int, min_conf: float) -> list[dict]:
-    """Word-level OCR with per-word confidence + pixel box (tesseract TSV via image_to_data).
+def _tesseract_lines(path: str, psm: int, min_conf: float) -> list[dict]:
+    """Line-level OCR: tesseract's own line grouping (image_to_data) joined into clean
+    reading-order text, each with a pixel bounding box.
 
-    This is what makes the `roll` join trustworthy: tesseract emits a confidence for every
-    word, so we keep the clean reads ("85% fewer tokens") and drop the garble ("7yreScrist")
-    rather than dumping the whole noisy frame. Boxes are in image-pixel space — and roll now
-    emits click/cursor coords in that SAME space — so a click resolves to the exact word under
-    it downstream. `line` groups words back into reading-order lines."""
+    Why lines, not words: on a lossless frame, joining every word in a tesseract line reproduces
+    `image_to_string` quality — the LSTM language model resolves the line as a whole ("autonomously
+    in USDC via x402 ..."). Splitting on a per-word confidence floor (the old `/ocr/words` path) is
+    what garbled dense UI text and inflated the downstream span index. We still drop words below a
+    light floor (stray glyphs / pure noise) but never break a line on confidence.
+
+    Boxes are in image-pixel space — and roll emits click/cursor coords in that SAME space — so a
+    click resolves to the exact line under it downstream."""
     import pytesseract
 
     data = pytesseract.image_to_data(
@@ -117,7 +123,7 @@ def _tesseract_words(path: str, psm: int, min_conf: float) -> list[dict]:
         output_type=pytesseract.Output.DICT,
     )
 
-    words: list[dict] = []
+    groups: dict[tuple, list[int]] = {}
     for i in range(len(data["text"])):
         text = (data["text"][i] or "").strip()
         try:
@@ -126,29 +132,27 @@ def _tesseract_words(path: str, psm: int, min_conf: float) -> list[dict]:
             conf = -1.0
         if not text or conf < min_conf:
             continue
-        words.append({
+        groups.setdefault((data["block_num"][i], data["par_num"][i], data["line_num"][i]), []).append(i)
+
+    lines: list[dict] = []
+    for idxs in groups.values():
+        idxs.sort(key=lambda i: data["left"][i])
+        text = " ".join((data["text"][i] or "").strip() for i in idxs).strip()
+        if not text:
+            continue
+        x0 = min(data["left"][i] for i in idxs)
+        y0 = min(data["top"][i] for i in idxs)
+        x1 = max(data["left"][i] + data["width"][i] for i in idxs)
+        y1 = max(data["top"][i] + data["height"][i] for i in idxs)
+        conf = sum(float(data["conf"][i]) for i in idxs) / len(idxs)
+        lines.append({
             "text": text,
             "conf": round(conf, 1),
-            "box": [int(data["left"][i]), int(data["top"][i]), int(data["width"][i]), int(data["height"][i])],
-            "line": [int(data["block_num"][i]), int(data["par_num"][i]), int(data["line_num"][i])],
+            "box": [int(x0), int(y0), int(x1 - x0), int(y1 - y0)],
         })
-    return words
 
-
-def _words_to_text(words: list[dict]) -> str:
-    """Reassemble confidence-filtered words into reading-order line text."""
-    lines: dict[tuple, list[dict]] = {}
-    for w in words:
-        lines.setdefault(tuple(w["line"]), []).append(w)
-
-    ordered = sorted(lines.values(), key=lambda ws: min(x["box"][1] for x in ws))
-    out = []
-    for ws in ordered:
-        ws.sort(key=lambda x: x["box"][0])
-        line = " ".join(x["text"] for x in ws).strip()
-        if line:
-            out.append(line)
-    return "\n".join(out)
+    lines.sort(key=lambda ln: (ln["box"][1], ln["box"][0]))
+    return lines
 
 
 def _paddle_ocr(path: str) -> str:
@@ -219,9 +223,11 @@ async def ocr_words(
     psm: int | None = Form(None),
     min_conf: float | None = Form(None),
 ) -> dict:
-    """Word-level OCR (tesseract only): returns confidence-filtered words with pixel boxes plus
-    the reassembled reading-order text. Drives the roll join — boxes resolve a click to the word
-    under it, and the confidence floor drops the dense-UI garble that plain `/ocr` returns."""
+    """Line-level OCR (tesseract only): returns reading-order lines, each with a pixel box and mean
+    confidence, plus the joined text and the frame height. Drives the roll join — a line box resolves
+    a click to the text under it, and line-level grouping reads dense UI text far cleaner than the
+    per-word confidence dropping it replaced. `image_height` lets the caller discard top-of-frame
+    chrome (the macOS menu bar) without hardcoding a pixel margin."""
     raw = await image.read()
     try:
         Image.open(io.BytesIO(raw)).verify()
@@ -234,15 +240,16 @@ async def ocr_words(
 
     try:
         started = time.time()
-        words = _tesseract_words(path, psm if psm is not None else DEFAULT_PSM, min_conf if min_conf is not None else 50.0)
+        lines = _tesseract_lines(path, psm if psm is not None else DEFAULT_PSM, min_conf if min_conf is not None else 40.0)
         return {
             "engine": "tesseract",
-            "words": words,
-            "text": _words_to_text(words),
+            "lines": lines,
+            "text": "\n".join(ln["text"] for ln in lines),
+            "image_height": Image.open(path).height,
             "model": "tesseract",
             "infer_secs": round(time.time() - started, 3),
         }
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"tesseract word OCR failed: {exc}") from exc
+        raise HTTPException(status_code=500, detail=f"tesseract line OCR failed: {exc}") from exc
     finally:
         os.unlink(path)

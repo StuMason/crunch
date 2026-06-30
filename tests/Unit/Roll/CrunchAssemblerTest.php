@@ -14,12 +14,11 @@ function assemblerPack(): Pack
 }
 
 /**
- * @param  array{0:int,1:int,2:int}  $line
- * @return array{text: string, conf: float, box: array<int, int>, line: array<int, int>}
+ * @return array{text: string, conf: float, box: array<int, int>}
  */
-function ocrWord(string $text, int $x, int $y, int $w, int $h, array $line = [0, 0, 0], float $conf = 90.0): array
+function ocrLine(string $text, int $x, int $y, int $w, int $h, float $conf = 90.0): array
 {
-    return ['text' => $text, 'conf' => $conf, 'box' => [$x, $y, $w, $h], 'line' => $line];
+    return ['text' => $text, 'conf' => $conf, 'box' => [$x, $y, $w, $h]];
 }
 
 it('builds the crunch.json envelope from a real pack', function () {
@@ -32,12 +31,12 @@ it('builds the crunch.json envelope from a real pack', function () {
         ->and($out['moments'])->toHaveCount(4);           // 2 app_switch + 2 click_on
 });
 
-it('dedupes confidence-filtered on-screen text into time-spans, splitting on gaps', function () {
-    $frame = [ocrWord('Deploy', 10, 10, 80, 20, [0, 0, 0]), ocrWord('Settings', 10, 40, 90, 20, [0, 0, 1])];
+it('dedupes on-screen text lines into time-spans, splitting on gaps', function () {
+    $frame = [ocrLine('Deploy', 10, 10, 80, 20), ocrLine('Settings', 10, 40, 90, 20)];
     $ocr = [
         0 => $frame,
         1000 => $frame,
-        5000 => [ocrWord('Deploy', 10, 10, 80, 20, [0, 0, 0])],   // reappears after a >gap absence
+        5000 => [ocrLine('Deploy', 10, 10, 80, 20)],   // reappears after a >gap absence
     ];
 
     $spans = (new CrunchAssembler)->assemble(assemblerPack(), 'p', $ocr, [], spanGapMs: 2500)['screen'];
@@ -51,13 +50,40 @@ it('dedupes confidence-filtered on-screen text into time-spans, splitting on gap
         ->and($settings)->toHaveCount(1);
 });
 
+it('fuzzy-merges OCR jitter (case/punctuation) of the same line into one span', function () {
+    $ocr = [
+        0 => [ocrLine('Stop Recording', 10, 10, 200, 20, conf: 80.0)],
+        1000 => [ocrLine('stop  recording.', 10, 10, 200, 20, conf: 95.0)],  // jittered read, higher conf
+    ];
+
+    $spans = (new CrunchAssembler)->assemble(assemblerPack(), 'p', $ocr, [], spanGapMs: 2500)['screen'];
+
+    expect($spans)->toHaveCount(1)
+        ->and($spans[0])->toMatchArray(['t_start' => 0, 't_end' => 1000])
+        ->and($spans[0]['text'])->toBe('stop  recording.');  // highest-confidence read wins the display
+});
+
+it('discards top-of-frame OS chrome (the menu bar) when a frame height is known', function () {
+    $ocr = [
+        0 => [
+            ocrLine('Arc File Edit View Spaces', 0, 5, 600, 18),   // menu bar, top of a 1080px frame
+            ocrLine('Deploy', 10, 200, 80, 20),
+        ],
+    ];
+
+    $spans = (new CrunchAssembler)->assemble(assemblerPack(), 'p', $ocr, [], frameHeight: 1080)['screen'];
+
+    expect($spans)->toHaveCount(1)
+        ->and($spans[0]['text'])->toBe('Deploy');
+});
+
 it('resolves a click to the OCR line under the cursor (ocr_at_click)', function () {
     $manifest = new PackManifest('0.0.14', 30, 0.0, 10000.0, ['id' => 1, 'x' => 0, 'y' => 0, 'w' => 1920, 'h' => 1080], 'screen.mp4', null, null, 0.0, 0.0, 'metadata.jsonl');
     $click = new PackEvent('click', 3000, 50, 20, 'left', 'Arc', 'win', [], []);
     $pack = new Pack('/tmp', $manifest, [$click]);
 
-    // frame at the click's t_ms: "Stop Recording" on one line; the click at (50,20) lands in "Stop"
-    $ocr = [3000 => [ocrWord('Stop', 10, 10, 80, 20, [0, 0, 0]), ocrWord('Recording', 95, 10, 130, 20, [0, 0, 0])]];
+    // frame at the click's t_ms: a "Stop Recording" line whose box covers the click at (50,20)
+    $ocr = [3000 => [ocrLine('Stop Recording', 10, 10, 215, 20)]];
 
     $event = (new CrunchAssembler)->assemble($pack, 'p', $ocr, [])['events'][0];
 

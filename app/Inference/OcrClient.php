@@ -67,14 +67,14 @@ class OcrClient
     }
 
     /**
-     * Word-level OCR (tesseract): every word with its pixel box + confidence, plus the
-     * reassembled reading-order text. Boxes are in screen.mp4 pixel space — the same space roll
-     * emits click/cursor coords in — so a click can be resolved to the exact word under it.
+     * Line-level OCR (tesseract): each reading-order line with its pixel box + mean confidence,
+     * plus the joined text and the frame height. Boxes are in screen.mp4 pixel space — the same
+     * space roll emits click/cursor coords in — so a click resolves to the line under it.
      *
-     * @param  int|null  $minConf  drop words below this tesseract confidence (sidecar default 50)
-     * @return array{words: list<array{text: string, conf: float, box: array<int, int>, line: array<int, int>}>, text: string}
+     * @param  int|null  $minConf  drop words below this tesseract confidence before joining (sidecar default 40)
+     * @return array{lines: list<array{text: string, conf: float, box: array<int, int>}>, text: string, image_height: int}
      */
-    public function words(string $imagePath, ?int $psm = null, ?int $minConf = null): array
+    public function lines(string $imagePath, ?int $psm = null, ?int $minConf = null): array
     {
         $base = rtrim((string) config('crunch.ocr.url'), '/');
         $timeout = (int) config('crunch.ocr.timeout', 60);
@@ -115,9 +115,13 @@ class OcrClient
             throw new RuntimeException("OCR sidecar error ({$response->status()}): {$detail}");
         }
 
-        /** @var list<array{text: string, conf: float, box: array<int, int>, line: array<int, int>}> $words */
-        $words = (array) $response->json('words', []);
+        /** @var list<array{text: string, conf: float, box: array<int, int>}> $lines */
+        $lines = (array) $response->json('lines', []);
 
-        return ['words' => $words, 'text' => trim((string) $response->json('text'))];
+        return [
+            'lines' => $lines,
+            'text' => trim((string) $response->json('text')),
+            'image_height' => (int) $response->json('image_height', 0),
+        ];
     }
 }
