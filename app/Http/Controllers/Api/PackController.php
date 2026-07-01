@@ -25,10 +25,18 @@ class PackController extends Controller
      * (its `manifest.json`, `metadata.jsonl`, `screen.mp4`, and optional `mic.m4a`/`camera.mp4`).
      *
      * **Get back:** `202 Accepted` with a job — note its `id` and poll `GET /jobs/{id}` until
-     * `status` is `completed`. The `result` is the crunch.json: `transcript` (text + word
-     * timestamps), `screen` (on-screen-text time-spans), `events` (each interaction joined with
-     * what was clicked via its accessibility label and what was being said), and cheap `moments`
-     * (`click_on`, `app_switch`). It's an index, not a dump — no per-frame data, no embeddings.
+     * `status` is `completed`. The `result` is the crunch.json:
+     *
+     * - `transcript` — full text + per-word timestamps.
+     * - `screen` — on-screen-text time-spans (line-level OCR, deduped): what was visible, when.
+     * - `events` — each interaction joined with what was clicked (its accessibility label **and**
+     *   the pixel-precise `ocr_at_click` line under the cursor) and what was being `said`.
+     * - `moments` — scored edit landmarks, each tagged with a `source`: `telemetry`
+     *   (`click_on`, `app_switch`), `transcript` (`cue_phrase`), `audio` (`emphasis`, `pause`).
+     * - `segments` — a beat-by-beat outline (title, keywords, summary), cut at app switches and
+     *   long pauses.
+     *
+     * It's an index, not a dump — no per-frame data, no embeddings.
      */
     public function store(Request $request): JsonResponse
     {
