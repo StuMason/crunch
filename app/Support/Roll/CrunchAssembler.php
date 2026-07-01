@@ -72,12 +72,9 @@ class CrunchAssembler
     /**
      * @param  array<int, list<OcrLine>>  $ocrLinesByFrame  screen-clock t_ms => OCR lines
      * @param  list<array{word: string, t_ms: int}>  $words  transcript words on the shared clock
-     * @return array<string, mixed> the crunch.json structure
-     */
-    /**
-     * @param  array<int, list<OcrLine>>  $ocrLinesByFrame  screen-clock t_ms => OCR lines
-     * @param  list<array{word: string, t_ms: int}>  $words  transcript words on the shared clock
      * @param  list<Moment>  $prosodyMoments  emphasis/pause moments from {@see AudioProsody}
+     * @param  list<array{word: string, t_ms: int}>  $sysWords  system-audio transcript words on the shared clock
+     * @param  list<array{t_ms: int, present: bool, score: float}>  $cameraSamples  on-camera presence samples
      * @return array<string, mixed> the crunch.json structure
      */
     public function assemble(
@@ -89,11 +86,14 @@ class CrunchAssembler
         int $spanGapMs = 2500,
         int $frameHeight = 0,
         array $prosodyMoments = [],
+        array $sysWords = [],
+        array $cameraSamples = [],
     ): array {
         $durationMs = (int) round($pack->manifest->durationMs);
-        $moments = $this->moments($pack, $words, $prosodyMoments);
+        $cameraSpans = $this->cameraSpans($cameraSamples);
+        $moments = $this->moments($pack, $words, $prosodyMoments, $cameraSpans);
 
-        return [
+        $out = [
             'pack_id' => $packId,
             'duration_ms' => $durationMs,
             'fps' => $pack->manifest->fps,
@@ -106,6 +106,50 @@ class CrunchAssembler
             'moments' => $moments,
             'segments' => $this->segmenter->segment($durationMs, $pack->interactions(), $words, $moments),
         ];
+
+        // Optional tracks — only surfaced when the take actually carries them, so a mic-only pack's
+        // crunch.json stays exactly as before.
+        if ($sysWords !== []) {
+            $out['sys_transcript'] = [
+                'text' => trim(implode(' ', array_column($sysWords, 'word'))),
+                'words' => $sysWords,
+            ];
+        }
+        if ($cameraSpans !== []) {
+            $out['camera'] = $cameraSpans;
+        }
+
+        return $out;
+    }
+
+    /**
+     * Collapse per-frame on-camera presence samples into `on_camera` time-spans: a maximal run of
+     * consecutive present frames becomes one {t_start, t_end} span (a single absent sample between
+     * two present ones ends the span). An index of when the presenter was on camera, not a per-frame
+     * dump — the mirror of {@see textSpans()} for the screen.
+     *
+     * @param  list<array{t_ms: int, present: bool, score: float}>  $samples  sorted by t_ms
+     * @return list<array{t_start: int, t_end: int}>
+     */
+    private function cameraSpans(array $samples): array
+    {
+        $spans = [];
+        $start = null;
+        $prev = null;
+        foreach ($samples as $s) {
+            if ($s['present']) {
+                $start ??= $s['t_ms'];
+                $prev = $s['t_ms'];
+            } elseif ($start !== null) {
+                $spans[] = ['t_start' => $start, 't_end' => (int) $prev];
+                $start = null;
+            }
+        }
+        if ($start !== null) {
+            $spans[] = ['t_start' => $start, 't_end' => (int) $prev];
+        }
+
+        return $spans;
     }
 
     /**
@@ -218,12 +262,14 @@ class CrunchAssembler
      *  - `telemetry`: a labelled click, an app switch, or typed text (what the OS told us).
      *  - `transcript`: a spoken cue the presenter flagged out loud ("the important thing is…").
      *  - `audio`: vocal emphasis (loudness peaks) and pauses (cut points), from {@see AudioProsody}.
+     *  - `camera`: the presenter coming (back) on camera, from the on-camera presence track.
      *
      * @param  list<array{word: string, t_ms: int}>  $words
      * @param  list<Moment>  $prosodyMoments
+     * @param  list<array{t_start: int, t_end: int}>  $cameraSpans
      * @return list<Moment>
      */
-    private function moments(Pack $pack, array $words, array $prosodyMoments): array
+    private function moments(Pack $pack, array $words, array $prosodyMoments, array $cameraSpans = []): array
     {
         $moments = [];
         foreach ($pack->interactions() as $event) {
@@ -234,6 +280,12 @@ class CrunchAssembler
             } elseif ($event->type === 'text' && $event->text !== null && trim($event->text) !== '') {
                 $moments[] = ['t_ms' => $event->tMs, 'kind' => 'type_text', 'label' => trim($event->text), 'score' => 0.8, 'source' => 'telemetry'];
             }
+        }
+
+        // The presenter coming (back) on camera is a cut point an editor cares about: one moment per
+        // on-camera span onset.
+        foreach ($cameraSpans as $span) {
+            $moments[] = ['t_ms' => $span['t_start'], 'kind' => 'on_camera', 'label' => 'presenter on camera', 'score' => 0.6, 'source' => 'camera'];
         }
 
         $moments = array_merge($moments, $this->transcriptMoments($words), $prosodyMoments);

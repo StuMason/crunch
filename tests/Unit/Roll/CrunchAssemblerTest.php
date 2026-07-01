@@ -137,6 +137,51 @@ it('does not emit a type_text moment for an empty typed string', function () {
     expect(array_filter($out['moments'], fn ($m) => $m['kind'] === 'type_text'))->toBeEmpty();
 });
 
+it('emits a sys_transcript track only when sysaudio words are present', function () {
+    $sys = [['word' => 'buy', 't_ms' => 1000], ['word' => 'now', 't_ms' => 1200]];
+
+    $out = (new CrunchAssembler)->assemble(assemblerPack(), 'p', [], [], sysWords: $sys);
+    expect($out['sys_transcript'])->toMatchArray(['text' => 'buy now'])
+        ->and($out['sys_transcript']['words'])->toHaveCount(2);
+
+    // absent entirely when the take has no system audio (mic-only pack is unchanged)
+    expect((new CrunchAssembler)->assemble(assemblerPack(), 'p', [], []))->not->toHaveKey('sys_transcript');
+});
+
+it('builds on_camera spans from presence samples and emits an onset moment per span', function () {
+    $samples = [
+        ['t_ms' => 0, 'present' => true, 'score' => 0.9],
+        ['t_ms' => 2000, 'present' => true, 'score' => 0.8],
+        ['t_ms' => 4000, 'present' => false, 'score' => 0.2],   // ends span 1
+        ['t_ms' => 6000, 'present' => true, 'score' => 0.85],   // starts span 2
+        ['t_ms' => 8000, 'present' => true, 'score' => 0.7],
+    ];
+
+    $out = (new CrunchAssembler)->assemble(assemblerPack(), 'p', [], [], cameraSamples: $samples);
+
+    expect($out['camera'])->toBe([
+        ['t_start' => 0, 't_end' => 2000],
+        ['t_start' => 6000, 't_end' => 8000],
+    ]);
+
+    $cam = array_values(array_filter($out['moments'], fn ($m) => $m['source'] === 'camera'));
+    expect($cam)->toHaveCount(2)
+        ->and($cam[0])->toMatchArray(['t_ms' => 0, 'kind' => 'on_camera', 'label' => 'presenter on camera', 'score' => 0.6])
+        ->and($cam[1])->toMatchArray(['t_ms' => 6000, 'kind' => 'on_camera']);
+});
+
+it('omits the camera track entirely when no frame is on-camera', function () {
+    $samples = [
+        ['t_ms' => 0, 'present' => false, 'score' => 0.1],
+        ['t_ms' => 2000, 'present' => false, 'score' => 0.2],
+    ];
+
+    $out = (new CrunchAssembler)->assemble(assemblerPack(), 'p', [], [], cameraSamples: $samples);
+
+    expect($out)->not->toHaveKey('camera')
+        ->and(array_filter($out['moments'], fn ($m) => $m['source'] === 'camera'))->toBeEmpty();
+});
+
 it('emits scored spoken-cue moments from the transcript on word boundaries', function () {
     $words = [
         ['word' => 'so', 't_ms' => 1000],

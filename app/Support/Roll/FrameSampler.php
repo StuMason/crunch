@@ -51,6 +51,29 @@ class FrameSampler
     }
 
     /**
+     * A flat cadence of timestamps across the take, capped to a frame budget — for the camera
+     * track, where on-camera presence changes slowly so a coarse even sample is enough (no need
+     * to align to interactions). The cadence widens if the take is long enough to exceed the cap.
+     *
+     * @param  int  $cadenceMs  target gap between samples
+     * @param  int  $maxFrames  hard cap on frames (cadence stretches to fit)
+     * @return list<int> sorted screen-clock t_ms
+     */
+    public function cadence(int $durationMs, int $cadenceMs = 2000, int $maxFrames = 180): array
+    {
+        $duration = max(0, $durationMs);
+        $effectiveCadence = max($cadenceMs, (int) ceil(max(1, $duration) / max(1, $maxFrames)));
+
+        // The loop always emits at least the t=0 sample (0 <= $duration), so this is non-empty.
+        $times = [];
+        for ($t = 0; $t <= $duration; $t += $effectiveCadence) {
+            $times[] = $t;
+        }
+
+        return $times;
+    }
+
+    /**
      * Sort, clamp to the take's bounds, and merge near-duplicate timestamps (an event that
      * lands ~on a baseline tick shouldn't extract the same frame twice).
      *

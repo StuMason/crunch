@@ -59,3 +59,16 @@ it('caps total frames on a long take instead of sampling at 1fps', function () {
     expect(count($times))->toBeLessThanOrEqual(250)
         ->and($times)->toContain(1000);   // an interaction far from any baseline tick survives
 });
+
+it('samples the camera track at a flat cadence across the take', function () {
+    expect((new FrameSampler)->cadence(10_000, cadenceMs: 2000, maxFrames: 180))
+        ->toBe([0, 2000, 4000, 6000, 8000, 10_000]);
+});
+
+it('widens the camera cadence to stay within the frame cap on a long take', function () {
+    $frames = (new FrameSampler)->cadence(600_000, cadenceMs: 2000, maxFrames: 180);
+
+    expect(count($frames))->toBeLessThanOrEqual(181)   // cap (+ the t=0 sample)
+        ->and($frames[0])->toBe(0)
+        ->and(end($frames))->toBeLessThanOrEqual(600_000);
+});

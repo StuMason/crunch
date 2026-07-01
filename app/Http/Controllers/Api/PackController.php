@@ -41,7 +41,7 @@ class PackController extends Controller
     public function store(Request $request): JsonResponse
     {
         $request->validate([
-            'pack' => ['required', 'file', 'max:204800'],   // up to ~200 MB take archive
+            'pack' => ['required', 'file', 'max:307200'],   // up to ~300 MB take archive (full packs incl. camera)
         ]);
 
         $file = $request->file('pack');

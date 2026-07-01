@@ -35,23 +35,65 @@ class FrameExtractor
     ) {}
 
     /**
+     * Extract screen frames at the given shared-clock timestamps. The screen track is anchored at
+     * `t0`, so the seek is `t_ms/1000` — {@see PackManifest::screenSecondsAt()}.
+     *
      * @param  list<int>  $timesMs
      * @return array<int, string> t_ms => absolute path of the extracted PNG (only successful frames)
      */
     public function extract(Pack $pack, array $timesMs, string $workDir): array
     {
-        $screen = $pack->absolutePath($pack->manifest->screenFile);
+        return $this->extractFrom(
+            $pack->absolutePath($pack->manifest->screenFile),
+            $timesMs,
+            fn (int $tMs): float => $pack->manifest->screenSecondsAt($tMs),
+            $workDir,
+        );
+    }
+
+    /**
+     * Extract camera frames at the given shared-clock timestamps. The camera starts
+     * `cameraSyncOffsetMs` after `t0`, so the seek is shifted — {@see PackManifest::cameraSecondsAt()}.
+     *
+     * @param  list<int>  $timesMs
+     * @return array<int, string> t_ms => absolute path of the extracted PNG (only successful frames)
+     */
+    public function extractCamera(Pack $pack, array $timesMs, string $workDir): array
+    {
+        if ($pack->manifest->cameraFile === null) {
+            return [];
+        }
+
+        return $this->extractFrom(
+            $pack->absolutePath($pack->manifest->cameraFile),
+            $timesMs,
+            fn (int $tMs): float => $pack->manifest->cameraSecondsAt($tMs),
+            $workDir,
+            prefix: 'cam',
+        );
+    }
+
+    /**
+     * One ffmpeg invocation per timestamp against a single media file, seeking with the supplied
+     * clock function. A frame that fails to extract is skipped rather than sinking the job.
+     *
+     * @param  list<int>  $timesMs
+     * @param  callable(int): float  $secondsAt  shared-clock t_ms => seconds to seek into this file
+     * @return array<int, string> t_ms => absolute PNG path (only successful frames)
+     */
+    public function extractFrom(string $mediaPath, array $timesMs, callable $secondsAt, string $workDir, string $prefix = 'frame'): array
+    {
         @mkdir($workDir, 0775, true);
 
         $frames = [];
         foreach ($timesMs as $tMs) {
-            $seconds = $pack->manifest->screenSecondsAt($tMs);
-            $out = rtrim($workDir, '/')."/frame_{$tMs}.png";
+            $seconds = $secondsAt($tMs);
+            $out = rtrim($workDir, '/')."/{$prefix}_{$tMs}.png";
 
             $result = Process::run([
                 $this->ffmpeg, '-hide_banner', '-loglevel', 'error', '-y',
                 '-ss', sprintf('%.3f', $seconds),
-                '-i', $screen,
+                '-i', $mediaPath,
                 '-frames:v', '1',
                 '-vf', "scale='min({$this->maxEdge},iw)':'-2'",
                 $out,

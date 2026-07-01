@@ -72,6 +72,24 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Roll pack — camera (on-camera presence) track
+    |--------------------------------------------------------------------------
+    | The pack pipeline samples the camera track at `cadence_ms` (presence changes slowly,
+    | so coarse is fine) up to `max_frames`, and scores each frame with zero-shot CLIP
+    | (in-process, cheap) against the present/absent labels. A frame counts as on-camera when
+    | the "present" label wins with score >= `present_threshold`. Contiguous on-camera frames
+    | become `camera` spans, and each span's start is an `on_camera` moment.
+    */
+    'camera' => [
+        'cadence_ms' => (int) env('CRUNCH_CAMERA_CADENCE_MS', 2000),
+        'max_frames' => (int) env('CRUNCH_CAMERA_MAX_FRAMES', 180),
+        'present_threshold' => (float) env('CRUNCH_CAMERA_PRESENT_THRESHOLD', 0.55),
+        'present_label' => env('CRUNCH_CAMERA_PRESENT_LABEL', 'a person on camera, a face looking at the screen'),
+        'absent_label' => env('CRUNCH_CAMERA_ABSENT_LABEL', 'an empty chair or background, no person'),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Max batch size
     |--------------------------------------------------------------------------
     | Inference runs one input at a time on CPU (~100-175ms each), so a single
