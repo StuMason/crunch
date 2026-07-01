@@ -71,9 +71,9 @@ class CrunchAssembler
 
     /**
      * @param  array<int, list<OcrLine>>  $ocrLinesByFrame  screen-clock t_ms => OCR lines
-     * @param  list<array{word: string, t_ms: int}>  $words  transcript words on the shared clock
+     * @param  list<array{word: string, t_ms: int, t_end_ms?: int, confidence?: float}>  $words  transcript words on the shared clock
      * @param  list<Moment>  $prosodyMoments  emphasis/pause moments from {@see AudioProsody}
-     * @param  list<array{word: string, t_ms: int}>  $sysWords  system-audio transcript words on the shared clock
+     * @param  list<array{word: string, t_ms: int, t_end_ms?: int, confidence?: float}>  $sysWords  system-audio transcript words on the shared clock
      * @param  list<array{t_ms: int, present: bool, score: float}>  $cameraSamples  on-camera presence samples
      * @return array<string, mixed> the crunch.json structure
      */
@@ -209,7 +209,7 @@ class CrunchAssembler
      * words said around it.
      *
      * @param  array<int, list<OcrLine>>  $ocrLinesByFrame
-     * @param  list<array{word: string, t_ms: int}>  $words
+     * @param  list<array{word: string, t_ms: int, t_end_ms?: int, confidence?: float}>  $words
      * @return list<array<string, mixed>>
      */
     private function events(Pack $pack, array $ocrLinesByFrame, array $words, int $saidWindowMs, int $frameHeight): array
@@ -264,7 +264,7 @@ class CrunchAssembler
      *  - `audio`: vocal emphasis (loudness peaks) and pauses (cut points), from {@see AudioProsody}.
      *  - `camera`: the presenter coming (back) on camera, from the on-camera presence track.
      *
-     * @param  list<array{word: string, t_ms: int}>  $words
+     * @param  list<array{word: string, t_ms: int, t_end_ms?: int, confidence?: float}>  $words
      * @param  list<Moment>  $prosodyMoments
      * @param  list<array{t_start: int, t_end: int}>  $cameraSpans
      * @return list<Moment>
@@ -300,7 +300,7 @@ class CrunchAssembler
      * loud and emit a scored moment at each (word-boundary matched, deduped to the strongest cue
      * within a beat, capped to a shortlist).
      *
-     * @param  list<array{word: string, t_ms: int}>  $words
+     * @param  list<array{word: string, t_ms: int, t_end_ms?: int, confidence?: float}>  $words
      * @return list<Moment>
      */
     private function transcriptMoments(array $words): array
@@ -466,7 +466,7 @@ class CrunchAssembler
     /**
      * Transcript words whose time falls within ±$windowMs of an event, joined into a phrase.
      *
-     * @param  list<array{word: string, t_ms: int}>  $words
+     * @param  list<array{word: string, t_ms: int, t_end_ms?: int, confidence?: float}>  $words
      */
     private function saidAround(array $words, int $tMs, int $windowMs): string
     {

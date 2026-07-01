@@ -103,7 +103,7 @@ class ProcessPack
      * placing each word on the SHARED clock via the sysaudio sync offset. Kept as a separate track
      * from the mic (the presenter's voice). Best-effort — missing/unreadable sysaudio yields nothing.
      *
-     * @return list<array{word: string, t_ms: int}>
+     * @return list<array{word: string, t_ms: int, t_end_ms: int, confidence: float}>
      */
     private function transcribeSysAudio(Pack $pack): array
     {
@@ -126,6 +126,8 @@ class ProcessPack
             $words[] = [
                 'word' => $text,
                 't_ms' => $pack->manifest->sysAudioTMsForSeconds($word['start']),
+                't_end_ms' => $pack->manifest->sysAudioTMsForSeconds($word['end']),
+                'confidence' => $word['probability'],
             ];
         }
 
@@ -225,7 +227,7 @@ class ProcessPack
      * the sidecar's word times are seconds into `mic.m4a`, which starts `micSyncOffsetMs`
      * after t0, so they must be shifted to line up with the input events.
      *
-     * @return list<array{word: string, t_ms: int}>
+     * @return list<array{word: string, t_ms: int, t_end_ms: int, confidence: float}>
      */
     private function transcribe(Pack $pack): array
     {
@@ -248,6 +250,8 @@ class ProcessPack
             $words[] = [
                 'word' => $text,
                 't_ms' => $pack->manifest->micTMsForSeconds($word['start']),
+                't_end_ms' => $pack->manifest->micTMsForSeconds($word['end']),
+                'confidence' => $word['probability'],
             ];
         }
 
