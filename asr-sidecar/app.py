@@ -72,7 +72,14 @@ async def transcribe(audio: UploadFile = File(...)) -> dict:
         for seg in segments:
             text_parts.append(seg.text)
             for w in (seg.words or []):
-                words.append({"word": w.word.strip(), "start": round(w.start, 3), "end": round(w.end, 3)})
+                # probability is faster-whisper's per-word confidence (0..1), free whenever
+                # word_timestamps=True — mirrors AssemblyAI's word.confidence for parity.
+                words.append({
+                    "word": w.word.strip(),
+                    "start": round(w.start, 3),
+                    "end": round(w.end, 3),
+                    "probability": round(w.probability, 3),
+                })
         infer = time.time() - started
 
         return {

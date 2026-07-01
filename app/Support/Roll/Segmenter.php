@@ -46,7 +46,7 @@ class Segmenter
 
     /**
      * @param  list<PackEvent>  $events
-     * @param  list<array{word: string, t_ms: int}>  $words
+     * @param  list<array{word: string, t_ms: int, t_end_ms?: int, confidence?: float}>  $words
      * @param  list<Moment>  $moments
      * @return list<Segment>
      */
@@ -153,7 +153,7 @@ class Segmenter
      * The most distinctive spoken words in the segment: frequency-ranked, stopwords and short
      * tokens removed.
      *
-     * @param  list<array{word: string, t_ms: int}>  $words
+     * @param  list<array{word: string, t_ms: int, t_end_ms?: int, confidence?: float}>  $words
      * @return list<string>
      */
     private function keywords(array $words): array
@@ -175,7 +175,7 @@ class Segmenter
     /**
      * The spoken sentence densest in the segment's keywords — the line that best captures the beat.
      *
-     * @param  list<array{word: string, t_ms: int}>  $words
+     * @param  list<array{word: string, t_ms: int, t_end_ms?: int, confidence?: float}>  $words
      * @param  list<string>  $keywords
      */
     private function summarySentence(array $words, array $keywords): string

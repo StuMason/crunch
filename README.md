@@ -62,7 +62,9 @@ Every model is a **one-line swap** in `config/crunch.php`.
 *what was on screen × what was said × what was done*, on one shared clock. It's the authoring index
 an editing agent reads instead of watching the footage:
 
-- **`transcript`** — full text + per-word timestamps (Whisper large-v3-turbo).
+- **`transcript`** — full text + per-word timings and confidence (Whisper large-v3-turbo): each
+  word carries `t_ms` (start), `t_end_ms` (end) and `confidence` (0–1) — close to AssemblyAI's
+  word shape, so a downstream editor can time captions and flag shaky words without a paid ASR call.
 - **`screen`** — on-screen-text time-spans (line-level OCR, deduped).
 - **`events`** — each click/scroll/key joined with what was clicked (accessibility label + the
   pixel-precise `ocr_at_click` line under the cursor) and what was being said.

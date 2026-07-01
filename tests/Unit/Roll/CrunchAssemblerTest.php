@@ -148,6 +148,16 @@ it('emits a sys_transcript track only when sysaudio words are present', function
     expect((new CrunchAssembler)->assemble(assemblerPack(), 'p', [], []))->not->toHaveKey('sys_transcript');
 });
 
+it('carries per-word end times and confidence through to the transcript (AAI parity)', function () {
+    $words = [['word' => 'hello', 't_ms' => 2000, 't_end_ms' => 2300, 'confidence' => 0.98]];
+    $sys = [['word' => 'ping', 't_ms' => 1000, 't_end_ms' => 1150, 'confidence' => 0.41]];
+
+    $out = (new CrunchAssembler)->assemble(assemblerPack(), 'p', [], $words, sysWords: $sys);
+
+    expect($out['transcript']['words'][0])->toBe(['word' => 'hello', 't_ms' => 2000, 't_end_ms' => 2300, 'confidence' => 0.98])
+        ->and($out['sys_transcript']['words'][0])->toBe(['word' => 'ping', 't_ms' => 1000, 't_end_ms' => 1150, 'confidence' => 0.41]);
+});
+
 it('builds on_camera spans from presence samples and emits an onset moment per span', function () {
     $samples = [
         ['t_ms' => 0, 'present' => true, 'score' => 0.9],
