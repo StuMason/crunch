@@ -77,15 +77,25 @@ class ProcessPack
     }
 
     /**
-     * Extract the sampled screen frames and line-OCR each one (tesseract, line-level). Returns a
-     * tuple of [t_ms => the frame's OCR lines (text + pixel box), frame pixel height] — the height
-     * lets the assembler discard the top-of-frame OS chrome. Frames that read nothing are dropped.
+     * Line-OCR the screen frames (tesseract, line-level). roll's pre-rendered keyframes (lossless
+     * PNGs it captured at the salient moments) are used directly where present, and the rest of the
+     * sampled timeline is filled by extracting frames from `screen.mp4` — so persistent on-screen
+     * text between interactions is still captured. Returns a tuple of [t_ms => the frame's OCR lines
+     * (text + pixel box), frame pixel height] — the height lets the assembler discard the top-of-frame
+     * OS chrome. Frames that read nothing are dropped.
      *
      * @return array{0: array<int, list<array{text: string, conf: float, box: array<int, int>}>>, 1: int}
      */
     private function ocrFrames(Pack $pack, string $workDir): array
     {
-        $frames = $this->extractor->extract($pack, $this->sampler->sample($pack), $workDir);
+        $extractTimes = $this->timesNeedingExtraction($this->sampler->sample($pack), array_keys($pack->keyframes));
+        $extracted = $this->extractor->extract($pack, $extractTimes, $workDir);
+
+        // Keyframe paths win on any t_ms collision (lossless PNG beats a re-extracted frame).
+        $frames = $pack->keyframes + $extracted;
+        ksort($frames);
+
+        $workPrefix = rtrim($workDir, '/').'/';
 
         $ocrLinesByFrame = [];
         $frameHeight = 0;
@@ -99,11 +109,37 @@ class ProcessPack
             } catch (Throwable) {
                 // A frame that won't OCR is dropped from the index, not fatal.
             } finally {
-                @unlink($path);
+                // Only extracted temp frames live under $workDir; roll's keyframes are pack input — never delete them.
+                if (str_starts_with($path, $workPrefix)) {
+                    @unlink($path);
+                }
             }
         }
 
         return [$ocrLinesByFrame, $frameHeight];
+    }
+
+    /**
+     * Of the frame timestamps the sampler chose, the ones that still need extracting from
+     * `screen.mp4` — i.e. those NOT already covered by a pre-rendered keyframe (within
+     * $mergeWithinMs, so a keyframe a few ms off a sampled tick isn't OCR'd twice). Pure +
+     * deterministic so the keyframe/extraction split is unit-testable without ffmpeg.
+     *
+     * @param  list<int>  $sampleTimes
+     * @param  list<int>  $keyframeTimes
+     * @return list<int>
+     */
+    public function timesNeedingExtraction(array $sampleTimes, array $keyframeTimes, int $mergeWithinMs = 200): array
+    {
+        return array_values(array_filter($sampleTimes, function (int $t) use ($keyframeTimes, $mergeWithinMs): bool {
+            foreach ($keyframeTimes as $k) {
+                if (abs($k - $t) <= $mergeWithinMs) {
+                    return false;
+                }
+            }
+
+            return true;
+        }));
     }
 
     /**

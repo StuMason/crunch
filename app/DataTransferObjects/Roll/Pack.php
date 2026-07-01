@@ -13,11 +13,14 @@ final readonly class Pack
 {
     /**
      * @param  list<PackEvent>  $events  ordered by t_ms
+     * @param  array<int, string>  $keyframes  screen-clock t_ms => absolute PNG path, for the
+     *                                         keyframes roll pre-renders (empty if the take has none)
      */
     public function __construct(
         public string $directory,
         public PackManifest $manifest,
         public array $events,
+        public array $keyframes = [],
     ) {}
 
     /**

@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use App\DataTransferObjects\Roll\Pack;
+use App\DataTransferObjects\Roll\PackEvent;
 use App\DataTransferObjects\Roll\PackManifest;
 use App\Support\Roll\PackReader;
 
@@ -33,6 +34,45 @@ it('parses the real manifest into typed fields', function () {
         ->and($m->hasCamera())->toBeTrue()
         ->and($m->hasMic())->toBeTrue()
         ->and($m->metadataFile)->toBe('metadata.jsonl');
+});
+
+it('parses the system-audio track (captured for future processing)', function () {
+    $m = readFixturePack()->manifest;
+
+    expect($m->hasSysAudio())->toBeTrue()
+        ->and($m->sysAudioFile)->toBe('sysaudio.m4a')
+        ->and($m->sysAudioSyncOffsetMs)->toBeGreaterThan(0.0)
+        // seeks like the other post-t0 tracks (offset shifts its timeline back)
+        ->and($m->sysAudioSecondsAt(2316))->toEqualWithDelta((2316 - $m->sysAudioSyncOffsetMs) / 1000, 1e-9);
+});
+
+it('treats a take with no sysaudio as not having one', function () {
+    $m = PackManifest::fromArray([
+        'version' => 'x', 'fps' => 30, 't0' => 0, 'durationMs' => 1, 'display' => [],
+        'screen' => ['file' => 'screen.mp4', 'firstPTS' => 0],
+    ]);
+
+    expect($m->hasSysAudio())->toBeFalse()
+        ->and($m->sysAudioFile)->toBeNull();
+});
+
+it('discovers roll pre-rendered keyframes keyed by screen-clock t_ms, ignoring non-numeric names', function () {
+    $pack = readFixturePack();
+
+    expect($pack->keyframes)->toHaveCount(2)                // 0.png + 2316.png; thumbnail.png ignored
+        ->and(array_keys($pack->keyframes))->toBe([0, 2316]) // ascending
+        ->and($pack->keyframes[0])->toEndWith('keyframes/0.png');
+});
+
+it('promotes a typed-text event (text + end_ms) from metadata', function () {
+    $e = PackEvent::fromArray([
+        'type' => 'text', 't_ms' => 191766, 'text' => 'shop', 'end_ms' => 193109, 'app' => 'Arc',
+    ]);
+
+    expect($e->type)->toBe('text')
+        ->and($e->text)->toBe('shop')
+        ->and($e->endMs)->toBe(193109)
+        ->and($e->isInteraction())->toBeTrue();      // typed text is an interaction, not cursor noise
 });
 
 it('loads telemetry sorted on the shared clock and drops cursor noise from interactions', function () {

@@ -6,10 +6,12 @@ namespace App\DataTransferObjects\Roll;
 
 /**
  * One row of a pack's `metadata.jsonl` — an input/semantic telemetry event stamped with
- * `t_ms` (ms since {@see PackManifest::$t0}). Roll writes six shapes (click, drag, cursor,
- * key, scroll, app_focus); clicks/drags also carry optional `app`/`window` and an
+ * `t_ms` (ms since {@see PackManifest::$t0}). Roll writes seven shapes (click, drag, cursor,
+ * key, scroll, app_focus, text); clicks/drags also carry optional `app`/`window` and an
  * accessibility context (`ax{role,label,bounds}`) describing exactly what was under the
- * pointer — the highest-value signal for the join, so it's surfaced first-class here.
+ * pointer — the highest-value signal for the join, so it's surfaced first-class here. A `text`
+ * event carries the actual string the user typed (with an `end_ms`), so its `text` is promoted
+ * too — typed input is a strong editorial signal.
  *
  * Only the fields the join actually uses are promoted; everything else stays in {@see $raw}.
  *
@@ -31,6 +33,8 @@ final readonly class PackEvent
         public ?string $window,
         public array $ax,
         public array $raw,
+        public ?string $text = null,
+        public ?int $endMs = null,
     ) {}
 
     /**
@@ -51,6 +55,8 @@ final readonly class PackEvent
             window: isset($row['window']) ? (string) $row['window'] : null,
             ax: $ax,
             raw: $row,
+            text: isset($row['text']) ? (string) $row['text'] : null,
+            endMs: isset($row['end_ms']) ? (int) $row['end_ms'] : null,
         );
     }
 

@@ -180,6 +180,7 @@ class CrunchAssembler
                 'button' => $event->button,
                 'app' => $event->app,
                 'window' => $event->window,
+                'text' => $event->text,
             ], fn ($v): bool => $v !== null);
 
             if ($event->ax !== []) {
@@ -214,7 +215,7 @@ class CrunchAssembler
     /**
      * Scored edit landmarks from every signal we have, merged onto one timeline so an editor can
      * rank or threshold them. Each carries a `source`:
-     *  - `telemetry`: a labelled click or an app switch (what the OS told us).
+     *  - `telemetry`: a labelled click, an app switch, or typed text (what the OS told us).
      *  - `transcript`: a spoken cue the presenter flagged out loud ("the important thing is…").
      *  - `audio`: vocal emphasis (loudness peaks) and pauses (cut points), from {@see AudioProsody}.
      *
@@ -230,6 +231,8 @@ class CrunchAssembler
                 $moments[] = ['t_ms' => $event->tMs, 'kind' => 'click_on', 'label' => $label, 'score' => 0.9, 'source' => 'telemetry'];
             } elseif ($event->type === 'app_focus' && $event->app !== null) {
                 $moments[] = ['t_ms' => $event->tMs, 'kind' => 'app_switch', 'label' => $event->app, 'score' => 1.0, 'source' => 'telemetry'];
+            } elseif ($event->type === 'text' && $event->text !== null && trim($event->text) !== '') {
+                $moments[] = ['t_ms' => $event->tMs, 'kind' => 'type_text', 'label' => trim($event->text), 'score' => 0.8, 'source' => 'telemetry'];
             }
         }
 

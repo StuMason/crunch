@@ -15,9 +15,9 @@ use RuntimeException;
  * `metadata.jsonl` telemetry into typed events sorted on the shared clock.
  *
  * Tolerant of the things that are legitimately variable in a real pack — telemetry may be
- * absent (`metadata: null`), and a malformed jsonl line is skipped rather than failing the
- * whole take — but strict about the contract it can't work without (a readable manifest +
- * the screen file it references).
+ * absent (`metadata: null`), a malformed jsonl line is skipped rather than failing the
+ * whole take, and the `keyframes/` directory is optional — but strict about the contract it
+ * can't work without (a readable manifest + the screen file it references).
  */
 class PackReader
 {
@@ -40,7 +40,37 @@ class PackReader
             ? []
             : $this->readEvents($directory.'/'.$manifest->metadataFile);
 
-        return new Pack($directory, $manifest, $events);
+        return new Pack($directory, $manifest, $events, $this->readKeyframes($directory));
+    }
+
+    /**
+     * Discover roll's pre-rendered screen keyframes: `keyframes/<t_ms>.png`, keyed by their
+     * screen-clock t_ms (the same clock as {@see PackManifest::screenSecondsAt()}). These let the
+     * OCR stage read lossless PNGs roll already captured at the salient moments instead of
+     * re-extracting those frames from `screen.mp4`. Absent directory / non-numeric names are
+     * simply ignored — the pipeline falls back to extracting every frame itself.
+     *
+     * @return array<int, string> t_ms => absolute PNG path, ascending by t_ms
+     */
+    private function readKeyframes(string $directory): array
+    {
+        $dir = $directory.'/keyframes';
+        if (! is_dir($dir)) {
+            return [];
+        }
+
+        $keyframes = [];
+        foreach (glob($dir.'/*.png') ?: [] as $path) {
+            $name = basename($path, '.png');
+            if ($name === '' || ! ctype_digit($name)) {
+                continue;
+            }
+            $keyframes[(int) $name] = $path;
+        }
+
+        ksort($keyframes);
+
+        return $keyframes;
     }
 
     /**

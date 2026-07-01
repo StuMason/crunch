@@ -32,6 +32,8 @@ final readonly class PackManifest
         public float $cameraSyncOffsetMs,
         public float $micSyncOffsetMs,
         public ?string $metadataFile,
+        public ?string $sysAudioFile = null,
+        public float $sysAudioSyncOffsetMs = 0.0,
     ) {}
 
     /**
@@ -45,6 +47,8 @@ final readonly class PackManifest
         $camera = is_array($data['camera'] ?? null) ? $data['camera'] : null;
         /** @var array<string, mixed>|null $mic */
         $mic = is_array($data['mic'] ?? null) ? $data['mic'] : null;
+        /** @var array<string, mixed>|null $sysAudio */
+        $sysAudio = is_array($data['sysaudio'] ?? null) ? $data['sysaudio'] : null;
 
         // The media/metadata filenames come from an untrusted manifest.json and are only ever
         // joined onto the pack directory, so collapse each to a bare basename here — a manifest
@@ -61,6 +65,8 @@ final readonly class PackManifest
             cameraSyncOffsetMs: (float) ($data['cameraSyncOffsetMs'] ?? 0),
             micSyncOffsetMs: (float) ($data['micSyncOffsetMs'] ?? 0),
             metadataFile: isset($data['metadata']) ? basename((string) $data['metadata']) : null,
+            sysAudioFile: $sysAudio === null ? null : basename((string) ($sysAudio['file'] ?? 'sysaudio.m4a')),
+            sysAudioSyncOffsetMs: (float) ($data['sysAudioSyncOffsetMs'] ?? 0),
         );
     }
 
@@ -72,6 +78,21 @@ final readonly class PackManifest
     public function hasMic(): bool
     {
         return $this->micFile !== null;
+    }
+
+    public function hasSysAudio(): bool
+    {
+        return $this->sysAudioFile !== null;
+    }
+
+    /**
+     * Seconds to seek into `sysaudio.m4a` for an event at `t_ms` (system audio starts
+     * `sysAudioSyncOffsetMs` after t0). Parsed and exposed for symmetry with mic/camera;
+     * the system-audio track is captured but not yet processed by the pipeline.
+     */
+    public function sysAudioSecondsAt(int $tMs): float
+    {
+        return max(0.0, ($tMs - $this->sysAudioSyncOffsetMs) / 1000.0);
     }
 
     /**
