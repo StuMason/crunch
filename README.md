@@ -1,6 +1,6 @@
 <div align="center">
 
-# 🔪 CRUNCH
+# CRUNCH
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![PHP 8.4](https://img.shields.io/badge/PHP-8.4-777BB4.svg)](https://php.net)
@@ -46,11 +46,34 @@ vendor — and to babysitting a pile of separate model servers.
 | `POST /classify-image` | Score an image against your own labels (zero-shot) | CLIP ViT-L/14 |
 | `POST /caption` | Describe an image in words | Florence-2-base (Python sidecar) |
 | `POST /ocr` | Read the text out of an image (`engine=` tesseract/paddle/florence) | Tesseract (default) · PaddleOCR · Florence-2 (Python sidecar) |
+| `POST /ocr/lines` | OCR as positioned lines — each with pixel `box` + `conf`idence | Tesseract |
 | `POST /detect` | Locate objects (boxes + labels) | Florence-2-base (Python sidecar) |
+| `POST /summarize` | Abstractive summary of a passage (rough, CPU-only) | distilbart-cnn-6-6 |
 | `POST /ocr/batch` → `GET /jobs/{id}` | OCR many crops in one async job (returns `{box, text}` per crop) | Tesseract (default) · PaddleOCR · Florence-2 (Python sidecar) |
 | `POST /transcribe` → `GET /jobs/{id}` | Speech → text + word timestamps (async) | Whisper large-v3-turbo (Python sidecar) |
+| `POST /pack` → `GET /jobs/{id}` | Crunch a **roll** screen-recording into a queryable `crunch.json` (async) | pipeline — see below |
 
 Every model is a **one-line swap** in `config/crunch.php`.
+
+## Roll packs — the "Cruncher"
+
+`POST /pack` turns a [**roll**](https://github.com/StuMason/roll-mac) screen-recording take
+(`screen.mp4` + `mic.m4a` + input telemetry) into a lean, queryable **`crunch.json`** — the join of
+*what was on screen × what was said × what was done*, on one shared clock. It's the authoring index
+an editing agent reads instead of watching the footage:
+
+- **`transcript`** — full text + per-word timestamps (Whisper large-v3-turbo).
+- **`screen`** — on-screen-text time-spans (line-level OCR, deduped).
+- **`events`** — each click/scroll/key joined with what was clicked (accessibility label + the
+  pixel-precise `ocr_at_click` line under the cursor) and what was being said.
+- **`moments`** — scored edit landmarks, each tagged with a `source`: `telemetry` (clicks, app
+  switches), `transcript` (spoken cues like *"the important thing is…"*), `audio` (vocal emphasis +
+  pauses, from an EBU R128 loudness pass).
+- **`segments`** — a beat-by-beat outline (title, keywords, summary), cut at app switches and pauses.
+
+Async: submit the take archive, poll `GET /jobs/{id}`. Runs at roughly **1.5× the recording length**
+on CPU (OCR + transcribe bound). The editorial signals (prosody, segmentation) are computed inline —
+no GPU, no generative LLM.
 
 ## Why crunch
 
@@ -150,8 +173,11 @@ Tests: `php artisan test`.
 
 ## Roadmap
 
-- Expose Florence-2's other tasks (OCR, object detection, region captions) as endpoints.
-- Image embeddings + more models behind the same gateway.
+- ✅ Florence-2 OCR + object detection exposed as endpoints.
+- ✅ Roll pack pipeline (`/pack`) — screen-recording → queryable `crunch.json` with scored moments + segments.
+- Image embeddings (SigLIP-2) behind the same gateway — for visual timeline search over packs.
+- Camera track for packs: on-camera detection + reaction moments.
+- Parallelised per-frame OCR to roughly halve pack processing time.
 - Automated model + library update tracking with alerts.
 
 ---

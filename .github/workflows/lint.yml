@@ -3,6 +3,7 @@ name: linter
 on:
   push:
     branches:
+      - 'feature/**'
       - develop
       - main
       - master
