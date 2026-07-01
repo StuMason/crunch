@@ -40,7 +40,11 @@ return [
             'connection' => env('DB_QUEUE_CONNECTION'),
             'table' => env('DB_QUEUE_TABLE', 'jobs'),
             'queue' => env('DB_QUEUE', 'default'),
-            'retry_after' => (int) env('DB_QUEUE_RETRY_AFTER', 90),
+            // MUST exceed the longest job's runtime, or a still-running job is deemed stale, re-reserved
+            // by another worker, and (with tries=1) instantly failed as "attempted too many times".
+            // ProcessPackJob (OCR + transcribe a whole pack) runs minutes and has a 1800s timeout, so
+            // the visibility window has to clear that. This is why long pack runs were failing.
+            'retry_after' => (int) env('DB_QUEUE_RETRY_AFTER', 2100),
             'after_commit' => false,
         ],
 

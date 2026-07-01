@@ -8,6 +8,7 @@ use App\Actions\Inference\ClassifyText;
 use App\Actions\Inference\DetectObjects;
 use App\Actions\Inference\Ocr;
 use App\Actions\Inference\Rerank;
+use App\Actions\Inference\Summarize;
 use App\Actions\Inference\Transcribe;
 use App\Jobs\TranscribeJob;
 use App\Models\InferenceJob;
@@ -43,6 +44,17 @@ it('classifies sentiment', function () {
         ->postJson('/sentiment', ['inputs' => 'lovely'])
         ->assertOk()
         ->assertJsonPath('results.0.label', 'admiration');
+});
+
+it('summarises text', function () {
+    $this->mock(Summarize::class)->shouldReceive('handle')
+        ->with('a very long passage about crunch and rolls and editing')
+        ->andReturn('crunch turns rolls into an editable index');
+
+    $this->withToken('test-key')
+        ->postJson('/summarize', ['inputs' => 'a very long passage about crunch and rolls and editing'])
+        ->assertOk()
+        ->assertJsonPath('summary', 'crunch turns rolls into an editable index');
 });
 
 it('moderates content (OpenAI moderations shape)', function () {
@@ -115,6 +127,21 @@ it('reads text from an image (OCR)', function () {
         ->postJson('/ocr', ['image' => base64_encode('fake-img')])
         ->assertOk()
         ->assertJsonPath('text', 'STOP');
+});
+
+it('reads text as positioned lines (OCR with boxes)', function () {
+    $this->mock(Ocr::class)->shouldReceive('lines')->andReturn([
+        'lines' => [['text' => 'Stop Recording', 'conf' => 92.0, 'box' => [10, 10, 200, 20]]],
+        'text' => 'Stop Recording',
+        'image_height' => 1080,
+    ]);
+
+    $this->withToken('test-key')
+        ->postJson('/ocr/lines', ['image' => base64_encode('fake-img')])
+        ->assertOk()
+        ->assertJsonPath('lines.0.text', 'Stop Recording')
+        ->assertJsonPath('lines.0.box', [10, 10, 200, 20])
+        ->assertJsonPath('image_height', 1080);
 });
 
 it('detects objects in an image', function () {

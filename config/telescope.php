@@ -16,7 +16,10 @@ return [
     |
     */
 
-    'enabled' => env('TELESCOPE_ENABLED', true),
+    // Off by default — Telescope is a local debugging tool and must never record in production
+    // (it bloats the DB and, under Octane, its storage writes flood the error tracker). Opt in with
+    // TELESCOPE_ENABLED=true in your local .env.
+    'enabled' => env('TELESCOPE_ENABLED', false),
 
     /*
     |--------------------------------------------------------------------------

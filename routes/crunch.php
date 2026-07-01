@@ -29,6 +29,7 @@ Route::middleware(CrunchAuth::class)->group(function () {
     Route::post('/rerank', [TextController::class, 'rerank']);
     Route::post('/sentiment', [TextController::class, 'sentiment']);
     Route::post('/moderate', [TextController::class, 'moderate']);
+    Route::post('/summarize', [TextController::class, 'summarize']);
 
     // Image: zero-shot classification runs in-process (CLIP), so it scales with workers.
     Route::post('/classify-image', [ImageController::class, 'classify']);
@@ -47,6 +48,10 @@ Route::middleware(CrunchAuth::class)->group(function () {
     // Batch OCR: many crops in one async job, drained within the vision inflight cap (the
     // submit is cheap — it just persists + queues — so it doesn't need the LimitInflight guard).
     Route::post('/ocr/batch', [OcrBatchController::class, 'store']);
+
+    // Line-level OCR (tesseract): reading-order lines with pixel boxes + confidence — the structured
+    // read the roll pack uses, surfaced standalone. Hits the OCR sidecar directly, not the vision one.
+    Route::post('/ocr/lines', [ImageController::class, 'ocrLines']);
 
     // Roll pack: upload a take archive, get back the joined crunch.json (async). Submit just
     // persists + queues; the heavy frames/OCR/transcribe pipeline runs on the queue worker.

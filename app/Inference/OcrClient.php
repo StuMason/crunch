@@ -65,4 +65,63 @@ class OcrClient
 
         return trim((string) $response->json('text'));
     }
+
+    /**
+     * Line-level OCR (tesseract): each reading-order line with its pixel box + mean confidence,
+     * plus the joined text and the frame height. Boxes are in screen.mp4 pixel space — the same
+     * space roll emits click/cursor coords in — so a click resolves to the line under it.
+     *
+     * @param  int|null  $minConf  drop words below this tesseract confidence before joining (sidecar default 40)
+     * @return array{lines: list<array{text: string, conf: float, box: array<int, int>}>, text: string, image_height: int}
+     */
+    public function lines(string $imagePath, ?int $psm = null, ?int $minConf = null): array
+    {
+        $base = rtrim((string) config('crunch.ocr.url'), '/');
+        $timeout = (int) config('crunch.ocr.timeout', 60);
+
+        $contents = file_get_contents($imagePath);
+        if ($contents === false) {
+            throw new RuntimeException("Cannot read image file: {$imagePath}");
+        }
+
+        $fields = [];
+        if ($psm !== null) {
+            $fields['psm'] = (string) $psm;
+        }
+        if ($minConf !== null) {
+            $fields['min_conf'] = (string) $minConf;
+        }
+
+        try {
+            $response = Http::timeout($timeout)
+                ->asMultipart()
+                ->attach('image', $contents, basename($imagePath))
+                ->post("{$base}/ocr/words", $fields);
+        } catch (ConnectionException $e) {
+            $message = strtolower($e->getMessage());
+            if (str_contains($message, 'timed out') || str_contains($message, 'curl error 28')) {
+                throw new VisionUnavailableException(422, "OCR (words) couldn't process this image within {$timeout}s — downscale or crop a tighter region and retry.", $e);
+            }
+
+            throw new VisionUnavailableException(503, "OCR sidecar unreachable at {$base}.", $e);
+        }
+
+        if ($response->failed()) {
+            $detail = $response->json('detail') ?? $response->body();
+            if ($response->status() === 422) {
+                throw new VisionUnavailableException(422, "OCR couldn't process this image: {$detail}");
+            }
+
+            throw new RuntimeException("OCR sidecar error ({$response->status()}): {$detail}");
+        }
+
+        /** @var list<array{text: string, conf: float, box: array<int, int>}> $lines */
+        $lines = (array) $response->json('lines', []);
+
+        return [
+            'lines' => $lines,
+            'text' => trim((string) $response->json('text')),
+            'image_height' => (int) $response->json('image_height', 0),
+        ];
+    }
 }

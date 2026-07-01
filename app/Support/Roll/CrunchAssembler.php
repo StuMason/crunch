@@ -10,65 +10,131 @@ use App\DataTransferObjects\Roll\Pack;
  * Assembles the lean `crunch.json` an editing agent reads — the join of
  * `event × on-screen-text × words-said` on the pack's shared clock.
  *
- * Design rules (from the roll-mac review):
- *  - It is an INDEX, not a data dump. Persistent on-screen text is deduped into time-spans
- *    ({text, t_start, t_end}), never one row per frame; cursor rows never appear; no embeddings.
- *  - "What was interacted with" prefers the OS accessibility label (`ax.label`) — a direct
- *    measurement of the clicked element — and only falls back to OCR. (Full-frame OCR gives no
- *    per-element boxes, so point-precise OCR fallback waits for box-level OCR; for now the
- *    surrounding on-screen-text is queryable via the `screen` spans around the event's t_ms.)
- *  - Only facts + cheap moments. No cut decisions — that stays with the agent.
+ * Works from line-level OCR (each reading-order line with a pixel box + mean confidence), which is
+ * what makes the screen side trustworthy:
+ *  - `screen` spans are built from the OCR lines, fuzzy-deduped into {text, t_start, t_end}
+ *    time-spans — an index of what was on screen when, not a per-frame dump. Near-identical reads
+ *    of the same line across frames collapse to one span (keyed on a normalised form), and the
+ *    cleanest-confidence read wins the display text.
+ *  - `ocr_at_click` resolves a click to the exact line whose box covers the cursor. roll emits
+ *    click coords in screen.mp4 pixel space (the same space as the OCR boxes), so it's a direct hit.
+ *  - top-of-frame OS chrome (the macOS menu bar) is discarded via a relative pixel cutoff, so the
+ *    clock/menu-bar line stops polluting the index.
  *
- * Pure: takes already-computed OCR text per frame and transcript words (on the shared clock),
+ * Pure: takes already-computed OCR lines per frame + transcript words (on the shared clock),
  * returns the output array. No I/O, so the whole join is unit-testable without sidecars.
+ *
+ * @phpstan-type OcrLine array{text: string, conf: float, box: array<int, int>}
+ * @phpstan-type Moment array{t_ms: int, kind: string, label: string, score: float, source: string}
  */
 class CrunchAssembler
 {
     /**
-     * @param  array<int, string>  $ocrByFrame  screen-clock t_ms => full-frame OCR text
+     * Lines whose top edge sits within this fraction of the frame height are treated as the OS menu
+     * bar / top chrome and dropped from the screen index.
+     */
+    private const TOP_CHROME_FRACTION = 0.03;
+
+    /**
+     * Spoken cues that mark an editorially-interesting beat, with a score for how strong a signal
+     * each is. Matched on word boundaries against the transcript so an editor can jump to "the bit
+     * that matters" the presenter flagged out loud.
+     */
+    private const CUE_PHRASES = [
+        'pay attention' => 0.9,
+        'the important thing' => 0.9,
+        'the important part' => 0.9,
+        'the whole point' => 0.85,
+        'the best part' => 0.85,
+        "here's the thing" => 0.85,
+        'look at this' => 0.85,
+        'check this out' => 0.85,
+        'watch this' => 0.85,
+        'the magic' => 0.8,
+        'the point is' => 0.8,
+        'this is where' => 0.8,
+        "what's interesting" => 0.8,
+        'crucially' => 0.8,
+        'the trick' => 0.75,
+        'the cool' => 0.75,
+        "here's the" => 0.7,
+        'the key' => 0.7,
+        'notably' => 0.7,
+        'this is the' => 0.65,
+        'the real' => 0.6,
+    ];
+
+    /** Keep at most this many spoken-cue moments — an editorial shortlist, not every utterance. */
+    private const MAX_CUE_MOMENTS = 25;
+
+    public function __construct(private readonly Segmenter $segmenter = new Segmenter) {}
+
+    /**
+     * @param  array<int, list<OcrLine>>  $ocrLinesByFrame  screen-clock t_ms => OCR lines
      * @param  list<array{word: string, t_ms: int}>  $words  transcript words on the shared clock
+     * @return array<string, mixed> the crunch.json structure
+     */
+    /**
+     * @param  array<int, list<OcrLine>>  $ocrLinesByFrame  screen-clock t_ms => OCR lines
+     * @param  list<array{word: string, t_ms: int}>  $words  transcript words on the shared clock
+     * @param  list<Moment>  $prosodyMoments  emphasis/pause moments from {@see AudioProsody}
      * @return array<string, mixed> the crunch.json structure
      */
     public function assemble(
         Pack $pack,
         string $packId,
-        array $ocrByFrame,
+        array $ocrLinesByFrame,
         array $words,
         int $saidWindowMs = 2500,
         int $spanGapMs = 2500,
+        int $frameHeight = 0,
+        array $prosodyMoments = [],
     ): array {
+        $durationMs = (int) round($pack->manifest->durationMs);
+        $moments = $this->moments($pack, $words, $prosodyMoments);
+
         return [
             'pack_id' => $packId,
-            'duration_ms' => (int) round($pack->manifest->durationMs),
+            'duration_ms' => $durationMs,
             'fps' => $pack->manifest->fps,
             'transcript' => [
                 'text' => trim(implode(' ', array_column($words, 'word'))),
                 'words' => $words,
             ],
-            'screen' => $this->textSpans($ocrByFrame, $spanGapMs),
-            'events' => $this->events($pack, $words, $saidWindowMs),
-            'moments' => $this->moments($pack),
+            'screen' => $this->textSpans($ocrLinesByFrame, $spanGapMs, $frameHeight),
+            'events' => $this->events($pack, $ocrLinesByFrame, $words, $saidWindowMs, $frameHeight),
+            'moments' => $moments,
+            'segments' => $this->segmenter->segment($durationMs, $pack->interactions(), $words, $moments),
         ];
     }
 
     /**
-     * Collapse per-frame OCR into deduped on-screen-text spans. Each distinct line of text
-     * becomes one or more {text, t_start, t_end} spans — a line seen across consecutive frames
-     * is one span; if it disappears for longer than $gapMs and returns, that's a new span.
+     * Collapse per-frame OCR lines into fuzzy-deduped on-screen-text spans. Each distinct line
+     * (keyed on a normalised form, so OCR jitter and punctuation don't fork it) becomes one or more
+     * {text, t_start, t_end} spans — seen across consecutive frames = one span; gone for longer than
+     * $gapMs then back = a new span. The display text is the highest-confidence read of the line.
      *
-     * @param  array<int, string>  $ocrByFrame
+     * @param  array<int, list<OcrLine>>  $ocrLinesByFrame
      * @return list<array{text: string, t_start: int, t_end: int}>
      */
-    private function textSpans(array $ocrByFrame, int $gapMs): array
+    private function textSpans(array $ocrLinesByFrame, int $gapMs, int $frameHeight): array
     {
-        ksort($ocrByFrame);
+        ksort($ocrLinesByFrame);
 
-        /** @var array<string, array{display: string, times: list<int>}> $byLine */
+        /** @var array<string, array{display: string, conf: float, times: list<int>}> $byLine */
         $byLine = [];
-        foreach ($ocrByFrame as $tMs => $blob) {
-            foreach ($this->lines($blob) as $line) {
-                $key = mb_strtolower($line);
-                $byLine[$key] ??= ['display' => $line, 'times' => []];
+        foreach ($ocrLinesByFrame as $tMs => $lines) {
+            foreach ($this->visibleLines($lines, $frameHeight) as $line) {
+                $key = $this->normalizeKey($line['text']);
+                if ($key === '') {
+                    continue;
+                }
+                if (! isset($byLine[$key])) {
+                    $byLine[$key] = ['display' => $line['text'], 'conf' => $line['conf'], 'times' => []];
+                } elseif ($line['conf'] > $byLine[$key]['conf']) {
+                    $byLine[$key]['display'] = $line['text'];
+                    $byLine[$key]['conf'] = $line['conf'];
+                }
                 $byLine[$key]['times'][] = (int) $tMs;
             }
         }
@@ -94,13 +160,15 @@ class CrunchAssembler
     }
 
     /**
-     * The join: one row per interaction (cursor noise already excluded), carrying what was
-     * clicked (ax.label first) and what was being said around it.
+     * The join: one row per interaction, carrying the accessibility label of what was clicked
+     * (`on_screen_text`), the pixel-precise OCR line under the cursor (`ocr_at_click`), and the
+     * words said around it.
      *
+     * @param  array<int, list<OcrLine>>  $ocrLinesByFrame
      * @param  list<array{word: string, t_ms: int}>  $words
      * @return list<array<string, mixed>>
      */
-    private function events(Pack $pack, array $words, int $saidWindowMs): array
+    private function events(Pack $pack, array $ocrLinesByFrame, array $words, int $saidWindowMs, int $frameHeight): array
     {
         $rows = [];
         foreach ($pack->interactions() as $event) {
@@ -125,6 +193,13 @@ class CrunchAssembler
                 $row['on_screen_text'] = $label;
             }
 
+            if ($event->x !== null && $event->y !== null) {
+                $clicked = $this->lineUnderPoint($ocrLinesByFrame, $event->tMs, $event->x, $event->y, $frameHeight);
+                if ($clicked !== null) {
+                    $row['ocr_at_click'] = $clicked;
+                }
+            }
+
             $said = $this->saidAround($words, $event->tMs, $saidWindowMs);
             if ($said !== '') {
                 $row['said'] = $said;
@@ -137,26 +212,200 @@ class CrunchAssembler
     }
 
     /**
-     * Cheap, pre-detected edit landmarks the agent shouldn't have to scan for. v1 = what we can
-     * derive from telemetry alone: a click on a labelled element, and an app switch. (raised_voice
-     * / camera moments arrive with the audio-prosody + MediaPipe work in Phase 2.)
+     * Scored edit landmarks from every signal we have, merged onto one timeline so an editor can
+     * rank or threshold them. Each carries a `source`:
+     *  - `telemetry`: a labelled click or an app switch (what the OS told us).
+     *  - `transcript`: a spoken cue the presenter flagged out loud ("the important thing is…").
+     *  - `audio`: vocal emphasis (loudness peaks) and pauses (cut points), from {@see AudioProsody}.
      *
-     * @return list<array{t_ms: int, kind: string, label: string, score: float}>
+     * @param  list<array{word: string, t_ms: int}>  $words
+     * @param  list<Moment>  $prosodyMoments
+     * @return list<Moment>
      */
-    private function moments(Pack $pack): array
+    private function moments(Pack $pack, array $words, array $prosodyMoments): array
     {
         $moments = [];
         foreach ($pack->interactions() as $event) {
             if ($event->type === 'click' && ($label = $event->axLabel()) !== null) {
-                $moments[] = ['t_ms' => $event->tMs, 'kind' => 'click_on', 'label' => $label, 'score' => 0.9];
+                $moments[] = ['t_ms' => $event->tMs, 'kind' => 'click_on', 'label' => $label, 'score' => 0.9, 'source' => 'telemetry'];
             } elseif ($event->type === 'app_focus' && $event->app !== null) {
-                $moments[] = ['t_ms' => $event->tMs, 'kind' => 'app_switch', 'label' => $event->app, 'score' => 1.0];
+                $moments[] = ['t_ms' => $event->tMs, 'kind' => 'app_switch', 'label' => $event->app, 'score' => 1.0, 'source' => 'telemetry'];
             }
         }
+
+        $moments = array_merge($moments, $this->transcriptMoments($words), $prosodyMoments);
 
         usort($moments, fn (array $a, array $b): int => $a['t_ms'] <=> $b['t_ms']);
 
         return $moments;
+    }
+
+    /**
+     * Spoken-cue moments: scan the transcript for the editorial cue phrases the presenter says out
+     * loud and emit a scored moment at each (word-boundary matched, deduped to the strongest cue
+     * within a beat, capped to a shortlist).
+     *
+     * @param  list<array{word: string, t_ms: int}>  $words
+     * @return list<Moment>
+     */
+    private function transcriptMoments(array $words): array
+    {
+        if ($words === []) {
+            return [];
+        }
+
+        // Build the lowercased transcript with a char-offset => t_ms map for each word start.
+        $text = '';
+        /** @var array<int, int> $offsets */
+        $offsets = [];
+        foreach ($words as $w) {
+            $offsets[strlen($text)] = $w['t_ms'];
+            $text .= mb_strtolower(trim($w['word'])).' ';
+        }
+
+        $moments = [];
+        foreach (self::CUE_PHRASES as $phrase => $score) {
+            $from = 0;
+            while (($pos = strpos($text, $phrase, $from)) !== false) {
+                $from = $pos + strlen($phrase);
+                $before = $pos === 0 || $text[$pos - 1] === ' ';
+                $after = $from >= strlen($text) || $text[$from] === ' ';
+                if ($before && $after) {
+                    $moments[] = [
+                        't_ms' => $this->tMsAtOffset($offsets, $pos),
+                        'kind' => 'cue_phrase',
+                        'label' => $phrase,
+                        'score' => $score,
+                        'source' => 'transcript',
+                    ];
+                }
+            }
+        }
+
+        return $this->topCueMoments($moments);
+    }
+
+    /**
+     * Keep the strongest cue per beat (collapse cues landing within a second of each other) and cap
+     * the shortlist.
+     *
+     * @param  list<Moment>  $moments
+     * @return list<Moment>
+     */
+    private function topCueMoments(array $moments): array
+    {
+        usort($moments, fn (array $a, array $b): int => $b['score'] <=> $a['score'] ?: $a['t_ms'] <=> $b['t_ms']);
+
+        $kept = [];
+        foreach ($moments as $m) {
+            foreach ($kept as $k) {
+                if (abs($k['t_ms'] - $m['t_ms']) <= 1000) {
+                    continue 2;
+                }
+            }
+            $kept[] = $m;
+            if (count($kept) >= self::MAX_CUE_MOMENTS) {
+                break;
+            }
+        }
+
+        return $kept;
+    }
+
+    /**
+     * The t_ms of the word containing a char offset — the latest word-start at or before it.
+     *
+     * @param  array<int, int>  $offsets  char offset => t_ms (ascending insertion order)
+     */
+    private function tMsAtOffset(array $offsets, int $pos): int
+    {
+        $best = 0;
+        foreach ($offsets as $offset => $tMs) {
+            if ($offset > $pos) {
+                break;
+            }
+            $best = $tMs;
+        }
+
+        return $best;
+    }
+
+    /**
+     * The OCR line under a point, taken from the frame AT that t_ms (interactions are always sampled,
+     * so the exact frame usually exists) or the nearest frame otherwise. Returns null if no line box
+     * covers the point.
+     *
+     * @param  array<int, list<OcrLine>>  $ocrLinesByFrame
+     */
+    private function lineUnderPoint(array $ocrLinesByFrame, int $tMs, int $x, int $y, int $frameHeight): ?string
+    {
+        $lines = $ocrLinesByFrame[$tMs] ?? $this->nearestFrameLines($ocrLinesByFrame, $tMs);
+        if ($lines === null) {
+            return null;
+        }
+
+        foreach ($this->visibleLines($lines, $frameHeight) as $line) {
+            [$bx, $by, $bw, $bh] = $line['box'];
+            if ($x >= $bx && $x <= $bx + $bw && $y >= $by && $y <= $by + $bh) {
+                $text = trim($line['text']);
+
+                return $text !== '' ? $text : null;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * @param  array<int, list<OcrLine>>  $ocrLinesByFrame
+     * @return list<OcrLine>|null
+     */
+    private function nearestFrameLines(array $ocrLinesByFrame, int $tMs): ?array
+    {
+        $bestKey = null;
+        $bestDist = PHP_INT_MAX;
+        foreach (array_keys($ocrLinesByFrame) as $f) {
+            $d = abs($f - $tMs);
+            if ($d < $bestDist) {
+                $bestDist = $d;
+                $bestKey = $f;
+            }
+        }
+
+        return $bestKey === null ? null : $ocrLinesByFrame[$bestKey];
+    }
+
+    /**
+     * Drop top-of-frame OS chrome (the menu bar) and single-character noise.
+     *
+     * @param  list<OcrLine>  $lines
+     * @return list<OcrLine>
+     */
+    private function visibleLines(array $lines, int $frameHeight): array
+    {
+        $cutoff = $frameHeight > 0 ? (int) round($frameHeight * self::TOP_CHROME_FRACTION) : 0;
+
+        $out = [];
+        foreach ($lines as $line) {
+            if ($cutoff > 0 && $line['box'][1] < $cutoff) {
+                continue;
+            }
+            if (mb_strlen(trim($line['text'])) <= 1) {
+                continue;
+            }
+            $out[] = $line;
+        }
+
+        return $out;
+    }
+
+    /**
+     * Normalise a line to a dedup key: lowercase, drop everything but letters and digits. Folds the
+     * punctuation/spacing/casing jitter between frames so the same line collapses to one span.
+     */
+    private function normalizeKey(string $text): string
+    {
+        return (string) preg_replace('/[^a-z0-9]+/u', '', mb_strtolower($text));
     }
 
     /**
@@ -169,23 +418,5 @@ class CrunchAssembler
         $near = array_filter($words, fn (array $w): bool => abs($w['t_ms'] - $tMs) <= $windowMs);
 
         return trim(implode(' ', array_column($near, 'word')));
-    }
-
-    /**
-     * Split an OCR blob into clean, de-duplicated lines worth indexing.
-     *
-     * @return list<string>
-     */
-    private function lines(string $blob): array
-    {
-        $lines = [];
-        foreach (preg_split('/\R/', $blob) ?: [] as $line) {
-            $line = trim((string) preg_replace('/\s+/', ' ', $line));
-            if ($line !== '' && mb_strlen($line) > 1) {
-                $lines[$line] = $line;   // dedupe repeated lines within one frame
-            }
-        }
-
-        return array_values($lines);
     }
 }

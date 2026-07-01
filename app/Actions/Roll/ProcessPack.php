@@ -4,10 +4,11 @@ declare(strict_types=1);
 
 namespace App\Actions\Roll;
 
-use App\Actions\Inference\Ocr;
 use App\DataTransferObjects\Roll\Pack;
 use App\Inference\AsrClient;
+use App\Inference\OcrClient;
 use App\Jobs\ProcessPackJob;
+use App\Support\Roll\AudioProsody;
 use App\Support\Roll\CrunchAssembler;
 use App\Support\Roll\FrameExtractor;
 use App\Support\Roll\FrameSampler;
@@ -29,8 +30,9 @@ class ProcessPack
         private readonly PackReader $reader,
         private readonly FrameSampler $sampler,
         private readonly FrameExtractor $extractor,
-        private readonly Ocr $ocr,
+        private readonly OcrClient $ocr,
         private readonly AsrClient $asr,
+        private readonly AudioProsody $audioProsody,
         private readonly CrunchAssembler $assembler,
     ) {}
 
@@ -41,27 +43,58 @@ class ProcessPack
     {
         $pack = $this->reader->read($packDir);
 
-        $ocrByFrame = $this->ocrFrames($pack, rtrim($packDir, '/').'/_frames');
+        [$ocrLinesByFrame, $frameHeight] = $this->ocrFrames($pack, rtrim($packDir, '/').'/_frames');
         $words = $this->transcribe($pack);
+        $prosodyMoments = $this->prosody($pack);
 
-        return $this->assembler->assemble($pack, $packId, $ocrByFrame, $words);
+        return $this->assembler->assemble(
+            $pack, $packId, $ocrLinesByFrame, $words,
+            frameHeight: $frameHeight,
+            prosodyMoments: $prosodyMoments,
+        );
     }
 
     /**
-     * Extract the sampled screen frames and OCR each one (tesseract). Returns t_ms => text.
+     * Vocal-emphasis + pause moments from the mic track (best-effort — a missing or unreadable mic
+     * just yields no prosody moments).
      *
-     * @return array<int, string>
+     * @return list<array{t_ms: int, kind: string, label: string, score: float, source: string}>
+     */
+    private function prosody(Pack $pack): array
+    {
+        if (! $pack->manifest->hasMic()) {
+            return [];
+        }
+
+        try {
+            return $this->audioProsody->analyze(
+                $pack->absolutePath((string) $pack->manifest->micFile),
+                (int) round($pack->manifest->micSyncOffsetMs),
+            );
+        } catch (Throwable) {
+            return [];
+        }
+    }
+
+    /**
+     * Extract the sampled screen frames and line-OCR each one (tesseract, line-level). Returns a
+     * tuple of [t_ms => the frame's OCR lines (text + pixel box), frame pixel height] — the height
+     * lets the assembler discard the top-of-frame OS chrome. Frames that read nothing are dropped.
+     *
+     * @return array{0: array<int, list<array{text: string, conf: float, box: array<int, int>}>>, 1: int}
      */
     private function ocrFrames(Pack $pack, string $workDir): array
     {
         $frames = $this->extractor->extract($pack, $this->sampler->sample($pack), $workDir);
 
-        $ocrByFrame = [];
+        $ocrLinesByFrame = [];
+        $frameHeight = 0;
         foreach ($frames as $tMs => $path) {
             try {
-                $text = $this->ocr->handle($path, 'tesseract');
-                if (trim($text) !== '') {
-                    $ocrByFrame[$tMs] = $text;
+                $result = $this->ocr->lines($path);
+                $frameHeight = $frameHeight ?: $result['image_height'];
+                if ($result['lines'] !== []) {
+                    $ocrLinesByFrame[$tMs] = $result['lines'];
                 }
             } catch (Throwable) {
                 // A frame that won't OCR is dropped from the index, not fatal.
@@ -70,7 +103,7 @@ class ProcessPack
             }
         }
 
-        return $ocrByFrame;
+        return [$ocrLinesByFrame, $frameHeight];
     }
 
     /**
