@@ -46,6 +46,15 @@ it('parses the system-audio track (captured for future processing)', function ()
         ->and($m->sysAudioSecondsAt(2316))->toEqualWithDelta((2316 - $m->sysAudioSyncOffsetMs) / 1000, 1e-9);
 });
 
+it('round-trips a sysaudio word time through the sysaudio clock back to t_ms', function () {
+    $m = readFixturePack()->manifest;
+
+    // a word at 5.0s INTO sysaudio.m4a lands at t0 + sysAudioSyncOffsetMs + 5s on the shared clock
+    $tMs = $m->sysAudioTMsForSeconds(5.0);
+
+    expect($m->sysAudioSecondsAt($tMs))->toEqualWithDelta(5.0, 1e-3);
+});
+
 it('treats a take with no sysaudio as not having one', function () {
     $m = PackManifest::fromArray([
         'version' => 'x', 'fps' => 30, 't0' => 0, 'durationMs' => 1, 'display' => [],

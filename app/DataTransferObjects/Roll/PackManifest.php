@@ -87,12 +87,21 @@ final readonly class PackManifest
 
     /**
      * Seconds to seek into `sysaudio.m4a` for an event at `t_ms` (system audio starts
-     * `sysAudioSyncOffsetMs` after t0). Parsed and exposed for symmetry with mic/camera;
-     * the system-audio track is captured but not yet processed by the pipeline.
+     * `sysAudioSyncOffsetMs` after t0).
      */
     public function sysAudioSecondsAt(int $tMs): float
     {
         return max(0.0, ($tMs - $this->sysAudioSyncOffsetMs) / 1000.0);
+    }
+
+    /**
+     * Shared-clock `t_ms` for a word whose time is measured in seconds INTO `sysaudio.m4a`.
+     * Inverse of {@see sysAudioSecondsAt()} — places the system-audio transcript on the same
+     * timeline as the mic transcript and the input events so every track lines up.
+     */
+    public function sysAudioTMsForSeconds(float $sysAudioSeconds): int
+    {
+        return (int) round($this->sysAudioSyncOffsetMs + $sysAudioSeconds * 1000.0);
     }
 
     /**

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Actions\Roll;
 
+use App\Actions\Inference\ClassifyImage;
 use App\DataTransferObjects\Roll\Pack;
 use App\Inference\AsrClient;
 use App\Inference\OcrClient;
@@ -34,6 +35,7 @@ class ProcessPack
         private readonly AsrClient $asr,
         private readonly AudioProsody $audioProsody,
         private readonly CrunchAssembler $assembler,
+        private readonly ClassifyImage $classify,
     ) {}
 
     /**
@@ -42,16 +44,92 @@ class ProcessPack
     public function handle(string $packDir, string $packId): array
     {
         $pack = $this->reader->read($packDir);
+        $workDir = rtrim($packDir, '/').'/_frames';
 
-        [$ocrLinesByFrame, $frameHeight] = $this->ocrFrames($pack, rtrim($packDir, '/').'/_frames');
+        [$ocrLinesByFrame, $frameHeight] = $this->ocrFrames($pack, $workDir);
         $words = $this->transcribe($pack);
+        $sysWords = $this->transcribeSysAudio($pack);
         $prosodyMoments = $this->prosody($pack);
+        $cameraSamples = $this->cameraPresence($pack, $workDir);
 
         return $this->assembler->assemble(
             $pack, $packId, $ocrLinesByFrame, $words,
             frameHeight: $frameHeight,
             prosodyMoments: $prosodyMoments,
+            sysWords: $sysWords,
+            cameraSamples: $cameraSamples,
         );
+    }
+
+    /**
+     * On-camera presence samples: sample the camera track at a coarse cadence, extract each frame,
+     * and score it with zero-shot CLIP (in-process) against the present/absent labels. A frame is
+     * on-camera when the "present" label wins with score >= the configured threshold. Best-effort —
+     * no camera, or ffmpeg/CLIP failures, just yield no samples (and so no camera track).
+     *
+     * @return list<array{t_ms: int, present: bool, score: float}> sorted by t_ms
+     */
+    private function cameraPresence(Pack $pack, string $workDir): array
+    {
+        if (! $pack->manifest->hasCamera()) {
+            return [];
+        }
+
+        /** @var array{cadence_ms: int, max_frames: int, present_threshold: float, present_label: string, absent_label: string} $cfg */
+        $cfg = config('crunch.camera');
+        $times = $this->sampler->cadence((int) round($pack->manifest->durationMs), $cfg['cadence_ms'], $cfg['max_frames']);
+        $frames = $this->extractor->extractCamera($pack, $times, $workDir);
+
+        $samples = [];
+        foreach ($frames as $tMs => $path) {
+            try {
+                $scores = $this->classify->handle($path, [$cfg['present_label'], $cfg['absent_label']]);
+                $present = $scores[0]['label'] === $cfg['present_label'] ? $scores[0]['score'] : ($scores[1]['score'] ?? 0.0);
+                $samples[] = ['t_ms' => (int) $tMs, 'present' => $present >= $cfg['present_threshold'], 'score' => round((float) $present, 4)];
+            } catch (Throwable) {
+                // A frame that won't classify is skipped, not fatal.
+            } finally {
+                @unlink($path);
+            }
+        }
+
+        usort($samples, fn (array $a, array $b): int => $a['t_ms'] <=> $b['t_ms']);
+
+        return $samples;
+    }
+
+    /**
+     * Transcribe the system-audio track (computer output — a video/call the user played) if present,
+     * placing each word on the SHARED clock via the sysaudio sync offset. Kept as a separate track
+     * from the mic (the presenter's voice). Best-effort — missing/unreadable sysaudio yields nothing.
+     *
+     * @return list<array{word: string, t_ms: int}>
+     */
+    private function transcribeSysAudio(Pack $pack): array
+    {
+        if (! $pack->manifest->hasSysAudio()) {
+            return [];
+        }
+
+        try {
+            $result = $this->asr->transcribe($pack->absolutePath((string) $pack->manifest->sysAudioFile));
+        } catch (Throwable) {
+            return [];
+        }
+
+        $words = [];
+        foreach ($result['words'] as $word) {
+            $text = trim($word['word']);
+            if ($text === '') {
+                continue;
+            }
+            $words[] = [
+                'word' => $text,
+                't_ms' => $pack->manifest->sysAudioTMsForSeconds($word['start']),
+            ];
+        }
+
+        return $words;
     }
 
     /**
