@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use App\Actions\Inference\ClassifyImage;
 use App\Actions\Inference\Ocr;
 use App\Inference\InferenceManager;
 use App\Listeners\PrewarmModels;
@@ -58,7 +59,7 @@ it('releases the slot after the request so the next one succeeds', function () {
 
 it('does not guard the in-process classify-image endpoint', function () {
     config(['crunch.vision.max_inflight' => 1]);
-    $this->mock(\App\Actions\Inference\ClassifyImage::class)
+    $this->mock(ClassifyImage::class)
         ->shouldReceive('handle')->andReturn([['label' => 'a cat', 'score' => 0.9]]);
 
     // Even with the vision slot held, classify-image (CLIP, in-process) is unaffected.
