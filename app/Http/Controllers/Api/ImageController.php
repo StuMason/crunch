@@ -146,6 +146,48 @@ class ImageController extends Controller
     }
 
     /**
+     * Read text as positioned lines (OCR with boxes)
+     *
+     * Like `/ocr`, but instead of one flat blob you get each reading-order line with its pixel
+     * `box` (`[x, y, w, h]`) and mean `conf`idence — the structured read the roll pack pipeline
+     * uses to resolve a click to the text under it. Tesseract only (the engine that emits boxes).
+     *
+     * **Send:** an `image` (upload or base64) or a public `url`; optional `psm` (page-segmentation
+     * mode) and `min_conf` (drop words below this confidence before joining a line).
+     * **Get back:** `lines` (each with `text`, `conf`, `box`), the joined `text`, and `image_height`.
+     */
+    public function ocrLines(Request $request, Ocr $ocr): JsonResponse
+    {
+        $validated = $request->validate([
+            'url' => ['sometimes', 'string'],
+            'image' => ['sometimes'],
+            'psm' => ['sometimes', 'integer', 'min:0', 'max:13'],
+            'min_conf' => ['sometimes', 'numeric', 'min:0', 'max:100'],
+        ]);
+
+        $psm = isset($validated['psm']) ? (int) $validated['psm'] : null;
+        $minConf = isset($validated['min_conf']) ? (int) $validated['min_conf'] : null;
+
+        [$image, $isTemp] = MediaResolver::resolve($request, 'image', mustBeLocal: true);
+
+        try {
+            $result = $ocr->lines($image, $psm, $minConf);
+        } finally {
+            if ($isTemp) {
+                @unlink($image);
+            }
+        }
+
+        return response()->json([
+            'engine' => 'tesseract',
+            'model' => 'tesseract',
+            'lines' => $result['lines'],
+            'text' => $result['text'],
+            'image_height' => $result['image_height'],
+        ]);
+    }
+
+    /**
      * Detect objects in an image
      *
      * Finds the objects in a picture and where they are, using Florence-2 in the vision

@@ -31,6 +31,18 @@ class Ocr
     }
 
     /**
+     * Line-level OCR (tesseract): each reading-order line with its pixel box + mean confidence,
+     * plus the joined text and the image height. This is the structured read the roll pack pipeline
+     * uses to resolve a click to the text under it — surfaced here so it's reusable standalone.
+     *
+     * @return array{lines: list<array{text: string, conf: float, box: array<int, int>}>, text: string, image_height: int}
+     */
+    public function lines(string $image, ?int $psm = null, ?int $minConf = null): array
+    {
+        return $this->ocr->lines($image, $psm, $minConf);
+    }
+
+    /**
      * Human-readable model label for an engine — reported back on OCR responses.
      */
     public static function modelLabel(string $engine): string

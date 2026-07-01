@@ -129,6 +129,21 @@ it('reads text from an image (OCR)', function () {
         ->assertJsonPath('text', 'STOP');
 });
 
+it('reads text as positioned lines (OCR with boxes)', function () {
+    $this->mock(Ocr::class)->shouldReceive('lines')->andReturn([
+        'lines' => [['text' => 'Stop Recording', 'conf' => 92.0, 'box' => [10, 10, 200, 20]]],
+        'text' => 'Stop Recording',
+        'image_height' => 1080,
+    ]);
+
+    $this->withToken('test-key')
+        ->postJson('/ocr/lines', ['image' => base64_encode('fake-img')])
+        ->assertOk()
+        ->assertJsonPath('lines.0.text', 'Stop Recording')
+        ->assertJsonPath('lines.0.box', [10, 10, 200, 20])
+        ->assertJsonPath('image_height', 1080);
+});
+
 it('detects objects in an image', function () {
     $this->mock(DetectObjects::class)->shouldReceive('handle')
         ->andReturn([['label' => 'dog', 'box' => [1.5, 2.5, 3.5, 4.5]]]);

@@ -49,6 +49,10 @@ Route::middleware(CrunchAuth::class)->group(function () {
     // submit is cheap — it just persists + queues — so it doesn't need the LimitInflight guard).
     Route::post('/ocr/batch', [OcrBatchController::class, 'store']);
 
+    // Line-level OCR (tesseract): reading-order lines with pixel boxes + confidence — the structured
+    // read the roll pack uses, surfaced standalone. Hits the OCR sidecar directly, not the vision one.
+    Route::post('/ocr/lines', [ImageController::class, 'ocrLines']);
+
     // Roll pack: upload a take archive, get back the joined crunch.json (async). Submit just
     // persists + queues; the heavy frames/OCR/transcribe pipeline runs on the queue worker.
     Route::post('/pack', [PackController::class, 'store']);
