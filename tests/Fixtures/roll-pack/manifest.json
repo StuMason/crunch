@@ -24,5 +24,10 @@
     "firstPTS" : 306069.50138999999
   },
   "micSyncOffsetMs" : 37.72644663695246,
+  "sysaudio" : {
+    "file" : "sysaudio.m4a",
+    "firstPTS" : 306069.57601234567
+  },
+  "sysAudioSyncOffsetMs" : 12.887142947874963,
   "metadata" : "metadata.jsonl"
 }

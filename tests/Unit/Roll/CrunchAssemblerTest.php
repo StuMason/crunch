@@ -116,6 +116,27 @@ it('keeps ax.label as on_screen_text and emits a click_on moment', function () {
         ->and($out['moments'])->toContain(['t_ms' => 3000, 'kind' => 'click_on', 'label' => 'Deploy', 'score' => 0.9, 'source' => 'telemetry']);
 });
 
+it('promotes a typed-text event and emits a type_text moment', function () {
+    $manifest = new PackManifest('0.0.14', 30, 0.0, 10000.0, ['id' => 1, 'x' => 0, 'y' => 0, 'w' => 100, 'h' => 100], 'screen.mp4', null, null, 0.0, 0.0, 'metadata.jsonl');
+    $typed = new PackEvent('text', 5000, null, null, null, 'Arc', 'NotRobophobic', [], [], 'shop', 5300);
+    $pack = new Pack('/tmp', $manifest, [$typed]);
+
+    $out = (new CrunchAssembler)->assemble($pack, 'p', [], []);
+
+    expect($out['events'][0])->toMatchArray(['t_ms' => 5000, 'type' => 'text', 'text' => 'shop'])
+        ->and($out['moments'])->toContain(['t_ms' => 5000, 'kind' => 'type_text', 'label' => 'shop', 'score' => 0.8, 'source' => 'telemetry']);
+});
+
+it('does not emit a type_text moment for an empty typed string', function () {
+    $manifest = new PackManifest('0.0.14', 30, 0.0, 10000.0, ['id' => 1, 'x' => 0, 'y' => 0, 'w' => 100, 'h' => 100], 'screen.mp4', null, null, 0.0, 0.0, 'metadata.jsonl');
+    $empty = new PackEvent('text', 5000, null, null, null, 'Arc', 'win', [], [], '   ');
+    $pack = new Pack('/tmp', $manifest, [$empty]);
+
+    $out = (new CrunchAssembler)->assemble($pack, 'p', [], []);
+
+    expect(array_filter($out['moments'], fn ($m) => $m['kind'] === 'type_text'))->toBeEmpty();
+});
+
 it('emits scored spoken-cue moments from the transcript on word boundaries', function () {
     $words = [
         ['word' => 'so', 't_ms' => 1000],
