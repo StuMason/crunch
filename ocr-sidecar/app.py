@@ -24,11 +24,14 @@ Contract:
 
 from __future__ import annotations
 
+import contextlib
 import io
 import os
 import tempfile
+import threading
 import time
 
+import anyio.to_thread
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from PIL import Image
 
@@ -37,8 +40,27 @@ DEFAULT_PSM = int(os.environ.get("OCR_DEFAULT_PSM", "6"))  # 6 = uniform block; 
 TESS_LANG = os.environ.get("OCR_TESS_LANG", "eng")
 PADDLE_LANG = os.environ.get("OCR_PADDLE_LANG", "en")
 
-app = FastAPI(title="crunch-ocr", version="1.0.0")
+# How many OCR requests may run at once. The endpoints are sync `def`s, so FastAPI runs each
+# in the anyio worker threadpool — capping the pool's tokens is the whole throttle: excess
+# requests queue on the event loop (cheap) instead of forking more tesseract processes.
+# Sized for the pack pipeline's parallel per-frame OCR; each tesseract is pinned to one
+# thread via OMP_THREAD_LIMIT=1 (Dockerfile), so this is also the CPU ceiling.
+# max(1, …): 0 would leave the limiter with zero tokens (every OCR queues forever) and a
+# negative value raises in the lifespan hook — either way a misconfig, not a mode.
+MAX_PARALLEL = max(1, int(os.environ.get("OCR_MAX_PARALLEL", "4")))
+
+
+@contextlib.asynccontextmanager
+async def _lifespan(app: FastAPI):
+    anyio.to_thread.current_default_thread_limiter().total_tokens = MAX_PARALLEL
+    yield
+
+
+app = FastAPI(title="crunch-ocr", version="1.0.0", lifespan=_lifespan)
 _paddle = None  # lazy — see get_paddle()
+# Paddle inference is NOT thread-safe (single shared pipeline, ~1GB resident) — serialize it.
+# Tesseract needs no lock: each call forks its own tesseract process.
+_paddle_lock = threading.Lock()
 
 
 def get_paddle():
@@ -159,7 +181,15 @@ def _paddle_ocr(path: str) -> str:
     """Run PaddleOCR and reassemble the detected lines into reading order. Paddle returns
     boxes in detection order, which scrambles multi-column text — sort top-to-bottom,
     then left-to-right by each line's box so the output reads naturally."""
-    result = get_paddle().predict(path)
+    # Non-blocking acquire: a queued paddle request would idle-hold one of the MAX_PARALLEL
+    # threadpool tokens and starve the tesseract/pack lane (paddle is serialized regardless).
+    # A fast 429 mirrors the app-side LimitInflight pattern: retry beats silent queueing.
+    if not _paddle_lock.acquire(blocking=False):
+        raise HTTPException(status_code=429, detail="paddle engine busy (one paddle OCR at a time) — retry shortly")
+    try:
+        result = get_paddle().predict(path)
+    finally:
+        _paddle_lock.release()
     if not result:
         return ""
 
@@ -180,16 +210,20 @@ def _paddle_ocr(path: str) -> str:
 
 
 @app.post("/ocr")
-async def ocr(
+def ocr(
     image: UploadFile = File(...),
     engine: str | None = Form(None),
     psm: int | None = Form(None),
 ) -> dict:
+    """Sync `def` (not `async`) on purpose: tesseract/paddle block, and a blocking call inside
+    an async endpoint would freeze the event loop and serialize every request. As a sync
+    endpoint FastAPI runs it in the worker threadpool, whose size (OCR_MAX_PARALLEL) is the
+    concurrency throttle — that's what lets the pack pipeline OCR frames in parallel."""
     engine = (engine or DEFAULT_ENGINE).lower()
     if engine not in ("tesseract", "paddle"):
         raise HTTPException(status_code=400, detail=f"unknown engine '{engine}' (expected tesseract or paddle)")
 
-    raw = await image.read()
+    raw = image.file.read()
     try:
         # Validate it's a real image up front so a bad upload is a clean 422, not a 500.
         Image.open(io.BytesIO(raw)).verify()
@@ -211,6 +245,8 @@ async def ocr(
         infer = time.time() - started
 
         return {"engine": engine, "text": text, "model": model, "infer_secs": round(infer, 3)}
+    except HTTPException:
+        raise  # e.g. the 429 paddle-busy — don't let the generic handler rebrand it a 500
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"{engine} OCR failed: {exc}") from exc
     finally:
@@ -218,7 +254,7 @@ async def ocr(
 
 
 @app.post("/ocr/words")
-async def ocr_words(
+def ocr_words(
     image: UploadFile = File(...),
     psm: int | None = Form(None),
     min_conf: float | None = Form(None),
@@ -227,8 +263,10 @@ async def ocr_words(
     confidence, plus the joined text and the frame height. Drives the roll join — a line box resolves
     a click to the text under it, and line-level grouping reads dense UI text far cleaner than the
     per-word confidence dropping it replaced. `image_height` lets the caller discard top-of-frame
-    chrome (the macOS menu bar) without hardcoding a pixel margin."""
-    raw = await image.read()
+    chrome (the macOS menu bar) without hardcoding a pixel margin.
+
+    Sync `def` like /ocr above: threadpool execution is what allows parallel per-frame OCR."""
+    raw = image.file.read()
     try:
         Image.open(io.BytesIO(raw)).verify()
     except Exception as exc:

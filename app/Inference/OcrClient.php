@@ -6,6 +6,8 @@ namespace App\Inference;
 
 use App\Exceptions\VisionUnavailableException;
 use Illuminate\Http\Client\ConnectionException;
+use Illuminate\Http\Client\Pool;
+use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\Http;
 use RuntimeException;
 
@@ -58,6 +60,11 @@ class OcrClient
             // A bad/undecodable image is the caller's fault — pass the 422 straight through.
             if ($response->status() === 422) {
                 throw new VisionUnavailableException(422, "OCR couldn't process this image: {$detail}");
+            }
+
+            // Paddle admits one OCR at a time; surface its busy signal as a clean retryable 429.
+            if ($response->status() === 429) {
+                throw new VisionUnavailableException(429, (string) $detail);
             }
 
             throw new RuntimeException("OCR sidecar error ({$response->status()}): {$detail}");
@@ -115,6 +122,75 @@ class OcrClient
             throw new RuntimeException("OCR sidecar error ({$response->status()}): {$detail}");
         }
 
+        return $this->wordsPayload($response);
+    }
+
+    /**
+     * Line-level OCR many local images concurrently — the pack pipeline's per-frame path.
+     *
+     * Frames go out in waves of $concurrency via {@see Http::pool}, sized to the sidecar's own
+     * parallelism cap (OCR_MAX_PARALLEL) so requests run instead of queueing inside it. Per-frame
+     * best-effort like the rest of the pipeline: a frame whose request fails (unreadable file,
+     * connection error, non-2xx) is simply absent from the result, never fatal.
+     *
+     * @param  array<int|string, string>  $imagePaths  key => absolute image path
+     * @param  (callable(int, int): void)|null  $onProgress  called after each wave with (done, total)
+     * @return array<int|string, array{lines: list<array{text: string, conf: float, box: array<int, int>}>, text: string, image_height: int}> keyed as the input; failed frames omitted
+     */
+    public function linesMany(array $imagePaths, int $concurrency = 4, ?callable $onProgress = null): array
+    {
+        $base = rtrim((string) config('crunch.ocr.url'), '/');
+        $timeout = (int) config('crunch.ocr.timeout', 60);
+
+        $results = [];
+        $total = count($imagePaths);
+        $done = 0;
+
+        foreach (array_chunk($imagePaths, max(1, $concurrency), preserve_keys: true) as $wave) {
+            $responses = Http::pool(function (Pool $pool) use ($wave, $base, $timeout): array {
+                $requests = [];
+                foreach ($wave as $key => $path) {
+                    $contents = @file_get_contents($path);
+                    if ($contents === false) {
+                        continue;
+                    }
+                    $requests[] = $pool->as((string) $key)
+                        ->timeout($timeout)
+                        ->asMultipart()
+                        ->attach('image', $contents, basename($path))
+                        ->post("{$base}/ocr/words");
+                }
+
+                return $requests;
+            });
+
+            foreach (array_keys($wave) as $key) {
+                $response = $responses[$key] ?? null;
+                // A pool entry is a ConnectionException instance when the request never completed.
+                if (! $response instanceof Response || $response->failed()) {
+                    continue;
+                }
+
+                $results[$key] = $this->wordsPayload($response);
+            }
+
+            $done += count($wave);
+            if ($onProgress !== null) {
+                $onProgress($done, $total);
+            }
+        }
+
+        return $results;
+    }
+
+    /**
+     * Map a successful `/ocr/words` response into the client's payload shape — the one contract
+     * shared by {@see lines()} and {@see linesMany()}, so a sidecar field change lands in one place.
+     *
+     * @return array{lines: list<array{text: string, conf: float, box: array<int, int>}>, text: string, image_height: int}
+     */
+    private function wordsPayload(Response $response): array
+    {
         /** @var list<array{text: string, conf: float, box: array<int, int>}> $lines */
         $lines = (array) $response->json('lines', []);
 

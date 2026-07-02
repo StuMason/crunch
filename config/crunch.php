@@ -72,6 +72,22 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Roll pack — pipeline concurrency
+    |--------------------------------------------------------------------------
+    | The pack pipeline extracts and OCRs a few hundred frames per take; doing both in
+    | bounded parallel waves is what keeps a pack at a fraction of the recording length.
+    | `ocr_concurrency` must not exceed the sidecar's OCR_MAX_PARALLEL (docker-compose) —
+    | excess requests would just queue inside the sidecar. `extract_concurrency` bounds
+    | simultaneous ffmpeg processes; each extraction is a cheap seek + single-frame decode,
+    | so 4 is polite on the shared box.
+    */
+    'pack' => [
+        'ocr_concurrency' => (int) env('CRUNCH_PACK_OCR_CONCURRENCY', 4),
+        'extract_concurrency' => (int) env('CRUNCH_PACK_EXTRACT_CONCURRENCY', 4),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Roll pack — camera (on-camera presence) track
     |--------------------------------------------------------------------------
     | The pack pipeline samples the camera track at `cadence_ms` (presence changes slowly,

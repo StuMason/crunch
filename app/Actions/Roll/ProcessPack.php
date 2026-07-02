@@ -20,7 +20,9 @@ use Throwable;
  * Turns a roll pack directory into the joined `crunch.json` index — the core of the "Cruncher".
  *
  * Read the pack → pick frames → OCR them (screen) → transcribe the mic (audio) → join it all
- * on the shared clock. Reusable: callable straight from a test or synchronously, with the
+ * on the shared clock. Frame extraction and per-frame OCR run in bounded parallel waves
+ * (crunch.pack config) — the pipeline's wall-time is dominated by those two, so N-wide waves
+ * divide it by ~N. Reusable: callable straight from a test or synchronously, with the
  * async {@see ProcessPackJob} just wrapping it. Per-frame OCR and the transcript are
  * each best-effort — a frame that won't OCR or a missing mic degrades the output, never sinks
  * the whole job.
@@ -39,18 +41,29 @@ class ProcessPack
     ) {}
 
     /**
+     * @param  (callable(array{stage: string, done?: int, total?: int}): void)|null  $onProgress
+     *                                                                                            invoked at each stage boundary (and per OCR wave), so the async job can surface
+     *                                                                                            where a minutes-long pack is up to via `GET /jobs/{id}`
      * @return array<string, mixed> the crunch.json structure
      */
-    public function handle(string $packDir, string $packId): array
+    public function handle(string $packDir, string $packId, ?callable $onProgress = null): array
     {
+        $report = $onProgress ?? fn (array $progress) => null;
+
         $pack = $this->reader->read($packDir);
         $workDir = rtrim($packDir, '/').'/_frames';
 
-        [$ocrLinesByFrame, $frameHeight] = $this->ocrFrames($pack, $workDir);
+        [$ocrLinesByFrame, $frameHeight] = $this->ocrFrames($pack, $workDir, $report);
+
+        $report(['stage' => 'transcribe']);
         $words = $this->transcribe($pack);
         $sysWords = $this->transcribeSysAudio($pack);
+
+        $report(['stage' => 'analyze']);
         $prosodyMoments = $this->prosody($pack);
         $cameraSamples = $this->cameraPresence($pack, $workDir);
+
+        $report(['stage' => 'assemble']);
 
         return $this->assembler->assemble(
             $pack, $packId, $ocrLinesByFrame, $words,
@@ -78,7 +91,7 @@ class ProcessPack
         /** @var array{cadence_ms: int, max_frames: int, present_threshold: float, present_label: string, absent_label: string} $cfg */
         $cfg = config('crunch.camera');
         $times = $this->sampler->cadence((int) round($pack->manifest->durationMs), $cfg['cadence_ms'], $cfg['max_frames']);
-        $frames = $this->extractor->extractCamera($pack, $times, $workDir);
+        $frames = $this->extractor->extractCamera($pack, $times, $workDir, (int) config('crunch.pack.extract_concurrency', 4));
 
         $samples = [];
         foreach ($frames as $tMs => $path) {
@@ -111,27 +124,11 @@ class ProcessPack
             return [];
         }
 
-        try {
-            $result = $this->asr->transcribe($pack->absolutePath((string) $pack->manifest->sysAudioFile));
-        } catch (Throwable) {
-            return [];
-        }
-
-        $words = [];
-        foreach ($result['words'] as $word) {
-            $text = trim($word['word']);
-            if ($text === '') {
-                continue;
-            }
-            $words[] = [
-                'word' => $text,
-                't_ms' => $pack->manifest->sysAudioTMsForSeconds($word['start']),
-                't_end_ms' => $pack->manifest->sysAudioTMsForSeconds($word['end']),
-                'confidence' => $word['probability'],
-            ];
-        }
-
-        return $words;
+        return $this->trackWords(
+            $pack,
+            (string) $pack->manifest->sysAudioFile,
+            fn (float $seconds): int => $pack->manifest->sysAudioTMsForSeconds($seconds),
+        );
     }
 
     /**
@@ -160,39 +157,46 @@ class ProcessPack
      * Line-OCR the screen frames (tesseract, line-level). roll's pre-rendered keyframes (lossless
      * PNGs it captured at the salient moments) are used directly where present, and the rest of the
      * sampled timeline is filled by extracting frames from `screen.mp4` — so persistent on-screen
-     * text between interactions is still captured. Returns a tuple of [t_ms => the frame's OCR lines
-     * (text + pixel box), frame pixel height] — the height lets the assembler discard the top-of-frame
-     * OS chrome. Frames that read nothing are dropped.
+     * text between interactions is still captured. Extraction and OCR both run in bounded parallel
+     * waves (crunch.pack config) — they dominate the pipeline's wall-time. Returns a tuple of
+     * [t_ms => the frame's OCR lines (text + pixel box), frame pixel height] — the height lets the
+     * assembler discard the top-of-frame OS chrome. Frames that read nothing (or fail) are dropped.
      *
+     * @param  callable(array{stage: string, done?: int, total?: int}): void  $report
      * @return array{0: array<int, list<array{text: string, conf: float, box: array<int, int>}>>, 1: int}
      */
-    private function ocrFrames(Pack $pack, string $workDir): array
+    private function ocrFrames(Pack $pack, string $workDir, callable $report): array
     {
+        $report(['stage' => 'extract_frames']);
         $extractTimes = $this->timesNeedingExtraction($this->sampler->sample($pack), array_keys($pack->keyframes));
-        $extracted = $this->extractor->extract($pack, $extractTimes, $workDir);
+        $extracted = $this->extractor->extract($pack, $extractTimes, $workDir, (int) config('crunch.pack.extract_concurrency', 4));
 
         // Keyframe paths win on any t_ms collision (lossless PNG beats a re-extracted frame).
         $frames = $pack->keyframes + $extracted;
         ksort($frames);
+
+        $results = $this->ocr->linesMany(
+            $frames,
+            (int) config('crunch.pack.ocr_concurrency', 4),
+            fn (int $done, int $total) => $report(['stage' => 'ocr', 'done' => $done, 'total' => $total]),
+        );
 
         $workPrefix = rtrim($workDir, '/').'/';
 
         $ocrLinesByFrame = [];
         $frameHeight = 0;
         foreach ($frames as $tMs => $path) {
-            try {
-                $result = $this->ocr->lines($path);
-                $frameHeight = $frameHeight ?: $result['image_height'];
-                if ($result['lines'] !== []) {
-                    $ocrLinesByFrame[$tMs] = $result['lines'];
+            // A frame that won't OCR is simply absent from $results — dropped, not fatal.
+            if (isset($results[$tMs])) {
+                $frameHeight = $frameHeight ?: $results[$tMs]['image_height'];
+                if ($results[$tMs]['lines'] !== []) {
+                    $ocrLinesByFrame[$tMs] = $results[$tMs]['lines'];
                 }
-            } catch (Throwable) {
-                // A frame that won't OCR is dropped from the index, not fatal.
-            } finally {
-                // Only extracted temp frames live under $workDir; roll's keyframes are pack input — never delete them.
-                if (str_starts_with($path, $workPrefix)) {
-                    @unlink($path);
-                }
+            }
+
+            // Only extracted temp frames live under $workDir; roll's keyframes are pack input — never delete them.
+            if (str_starts_with($path, $workPrefix)) {
+                @unlink($path);
             }
         }
 
@@ -235,8 +239,26 @@ class ProcessPack
             return [];
         }
 
+        return $this->trackWords(
+            $pack,
+            (string) $pack->manifest->micFile,
+            fn (float $seconds): int => $pack->manifest->micTMsForSeconds($seconds),
+        );
+    }
+
+    /**
+     * Transcribe one audio track and map each word onto the shared clock with the track's own
+     * seconds→t_ms function. Best-effort — an unreadable track or a sidecar failure yields no
+     * words rather than sinking the job. Shared by the mic and sysaudio paths, whose only
+     * difference is the sync offset baked into the mapping.
+     *
+     * @param  callable(float): int  $tMsForSeconds  seconds into this track => shared-clock t_ms
+     * @return list<array{word: string, t_ms: int, t_end_ms: int, confidence: float}>
+     */
+    private function trackWords(Pack $pack, string $file, callable $tMsForSeconds): array
+    {
         try {
-            $result = $this->asr->transcribe($pack->absolutePath((string) $pack->manifest->micFile));
+            $result = $this->asr->transcribe($pack->absolutePath($file));
         } catch (Throwable) {
             return [];
         }
@@ -249,8 +271,8 @@ class ProcessPack
             }
             $words[] = [
                 'word' => $text,
-                't_ms' => $pack->manifest->micTMsForSeconds($word['start']),
-                't_end_ms' => $pack->manifest->micTMsForSeconds($word['end']),
+                't_ms' => $tMsForSeconds($word['start']),
+                't_end_ms' => $tMsForSeconds($word['end']),
                 'confidence' => $word['probability'],
             ];
         }
