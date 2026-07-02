@@ -39,7 +39,8 @@ class JobPresenter
             'model' => $job->model,
             'result' => self::result($job),
             // Where a still-processing job is up to — `{stage, done?, total?}` (e.g. a pack's
-            // OCR wave count). Null before the worker picks it up and once completed.
+            // OCR wave count). Null before the worker picks it up and once completed; a FAILED
+            // job retains the last stage reached (where it died) — key liveness off `status`.
             'progress' => $job->progress,
             'error' => $job->error,
             'poll_url' => url("/jobs/{$job->uid}"),

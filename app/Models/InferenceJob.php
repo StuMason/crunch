@@ -13,7 +13,7 @@ use Illuminate\Support\Carbon;
  *
  * @property string $uid
  * @property array<string, mixed>|null $result
- * @property array{stage: string, done?: int, total?: int}|null $progress where a long-running job is up to (null once completed)
+ * @property array{stage: string, done?: int, total?: int}|null $progress where a long-running job is up to (null once completed; failed jobs keep the last stage reached)
  * @property Carbon|null $completed_at
  * @property Carbon|null $created_at
  */

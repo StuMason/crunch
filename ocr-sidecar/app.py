@@ -45,7 +45,9 @@ PADDLE_LANG = os.environ.get("OCR_PADDLE_LANG", "en")
 # requests queue on the event loop (cheap) instead of forking more tesseract processes.
 # Sized for the pack pipeline's parallel per-frame OCR; each tesseract is pinned to one
 # thread via OMP_THREAD_LIMIT=1 (Dockerfile), so this is also the CPU ceiling.
-MAX_PARALLEL = int(os.environ.get("OCR_MAX_PARALLEL", "4"))
+# max(1, …): 0 would leave the limiter with zero tokens (every OCR queues forever) and a
+# negative value raises in the lifespan hook — either way a misconfig, not a mode.
+MAX_PARALLEL = max(1, int(os.environ.get("OCR_MAX_PARALLEL", "4")))
 
 
 @contextlib.asynccontextmanager
@@ -179,8 +181,15 @@ def _paddle_ocr(path: str) -> str:
     """Run PaddleOCR and reassemble the detected lines into reading order. Paddle returns
     boxes in detection order, which scrambles multi-column text — sort top-to-bottom,
     then left-to-right by each line's box so the output reads naturally."""
-    with _paddle_lock:
+    # Non-blocking acquire: a queued paddle request would idle-hold one of the MAX_PARALLEL
+    # threadpool tokens and starve the tesseract/pack lane (paddle is serialized regardless).
+    # A fast 429 mirrors the app-side LimitInflight pattern: retry beats silent queueing.
+    if not _paddle_lock.acquire(blocking=False):
+        raise HTTPException(status_code=429, detail="paddle engine busy (one paddle OCR at a time) — retry shortly")
+    try:
         result = get_paddle().predict(path)
+    finally:
+        _paddle_lock.release()
     if not result:
         return ""
 
@@ -236,6 +245,8 @@ def ocr(
         infer = time.time() - started
 
         return {"engine": engine, "text": text, "model": model, "infer_secs": round(infer, 3)}
+    except HTTPException:
+        raise  # e.g. the 429 paddle-busy — don't let the generic handler rebrand it a 500
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"{engine} OCR failed: {exc}") from exc
     finally:

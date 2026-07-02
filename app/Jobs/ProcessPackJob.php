@@ -49,11 +49,13 @@ class ProcessPackJob implements ShouldQueue
             // Stage boundaries are minutes apart and OCR waves are seconds apart, so writing
             // every report straight to the row is cheap — and pollers of /jobs/{id} see live
             // progress instead of a bare "processing". Left as-is on failure (shows where it died).
+            // rescue(): the write is best-effort like the pipeline it reports on — a transient
+            // SQLite lock on a cosmetic update must never sink a minutes-long, tries=1 run.
             $result = $action->handle(
                 $packDir,
                 $this->packId,
                 function (array $progress) use ($job): void {
-                    $job->update(['progress' => $progress]);
+                    rescue(fn () => $job->update(['progress' => $progress]), report: false);
                 },
             );
 

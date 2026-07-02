@@ -62,6 +62,11 @@ class OcrClient
                 throw new VisionUnavailableException(422, "OCR couldn't process this image: {$detail}");
             }
 
+            // Paddle admits one OCR at a time; surface its busy signal as a clean retryable 429.
+            if ($response->status() === 429) {
+                throw new VisionUnavailableException(429, (string) $detail);
+            }
+
             throw new RuntimeException("OCR sidecar error ({$response->status()}): {$detail}");
         }
 
@@ -117,14 +122,7 @@ class OcrClient
             throw new RuntimeException("OCR sidecar error ({$response->status()}): {$detail}");
         }
 
-        /** @var list<array{text: string, conf: float, box: array<int, int>}> $lines */
-        $lines = (array) $response->json('lines', []);
-
-        return [
-            'lines' => $lines,
-            'text' => trim((string) $response->json('text')),
-            'image_height' => (int) $response->json('image_height', 0),
-        ];
+        return $this->wordsPayload($response);
     }
 
     /**
@@ -173,14 +171,7 @@ class OcrClient
                     continue;
                 }
 
-                /** @var list<array{text: string, conf: float, box: array<int, int>}> $lines */
-                $lines = (array) $response->json('lines', []);
-
-                $results[$key] = [
-                    'lines' => $lines,
-                    'text' => trim((string) $response->json('text')),
-                    'image_height' => (int) $response->json('image_height', 0),
-                ];
+                $results[$key] = $this->wordsPayload($response);
             }
 
             $done += count($wave);
@@ -190,5 +181,23 @@ class OcrClient
         }
 
         return $results;
+    }
+
+    /**
+     * Map a successful `/ocr/words` response into the client's payload shape — the one contract
+     * shared by {@see lines()} and {@see linesMany()}, so a sidecar field change lands in one place.
+     *
+     * @return array{lines: list<array{text: string, conf: float, box: array<int, int>}>, text: string, image_height: int}
+     */
+    private function wordsPayload(Response $response): array
+    {
+        /** @var list<array{text: string, conf: float, box: array<int, int>}> $lines */
+        $lines = (array) $response->json('lines', []);
+
+        return [
+            'lines' => $lines,
+            'text' => trim((string) $response->json('text')),
+            'image_height' => (int) $response->json('image_height', 0),
+        ];
     }
 }
