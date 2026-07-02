@@ -48,3 +48,20 @@ it('requires authentication', function () {
     $this->post('/pack', ['pack' => UploadedFile::fake()->create('p.tar', 1)])
         ->assertStatus(401);
 });
+
+it('surfaces the worker progress in the poll envelope while processing', function () {
+    $job = InferenceJob::create([
+        'type' => 'pack',
+        'status' => InferenceJob::STATUS_PROCESSING,
+        'model' => 'roll-pack-v1',
+        'progress' => ['stage' => 'ocr', 'done' => 8, 'total' => 240],
+    ]);
+
+    $this->withToken('test-key')
+        ->getJson("/jobs/{$job->uid}")
+        ->assertOk()
+        ->assertJsonPath('status', 'processing')
+        ->assertJsonPath('progress.stage', 'ocr')
+        ->assertJsonPath('progress.done', 8)
+        ->assertJsonPath('progress.total', 240);
+});

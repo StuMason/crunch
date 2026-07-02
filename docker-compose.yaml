@@ -107,6 +107,14 @@ services:
       # on the first engine=paddle request, so this service idles at ~70MB until then.
       OCR_DEFAULT_ENGINE: tesseract
       OCR_DEFAULT_PSM: "6"
+      # The pack pipeline OCRs frames in parallel; this caps concurrent OCRs inside the
+      # sidecar (excess requests queue). Each tesseract is pinned to one thread
+      # (OMP_THREAD_LIMIT=1 in the Dockerfile), so parallelism ~= cores used.
+      OCR_MAX_PARALLEL: "4"
+    deploy:
+      resources:
+        limits:
+          cpus: "4"                # same reasoning as asr: shared box, don't starve the web apps
     networks:
       - default                    # internal only; never exposed to Traefik
 

@@ -34,8 +34,13 @@ ENV HOME=/root
 # only writes models to disk; paddle is still lazy-loaded into RAM per request (idle ~70MB).
 RUN python selftest.py
 
+# OMP_THREAD_LIMIT=1 pins each tesseract process to one thread. Tesseract's OpenMP barely
+# helps a single page but multiplies CPU when several OCRs run concurrently — with
+# OCR_MAX_PARALLEL parallel requests (see app.py), this keeps the ceiling at one core per
+# request instead of cores × requests.
 ENV OCR_DEFAULT_ENGINE=tesseract \
-    OCR_DEFAULT_PSM=6
+    OCR_DEFAULT_PSM=6 \
+    OMP_THREAD_LIMIT=1
 
 EXPOSE 9000
 

@@ -73,8 +73,11 @@ an editing agent reads instead of watching the footage:
   pauses, from an EBU R128 loudness pass).
 - **`segments`** — a beat-by-beat outline (title, keywords, summary), cut at app switches and pauses.
 
-Async: submit the take archive, poll `GET /jobs/{id}`. Runs at roughly **1.5× the recording length**
-on CPU (OCR + transcribe bound). The editorial signals (prosody, segmentation) are computed inline —
+Async: submit the take archive, poll `GET /jobs/{id}` — while processing, the envelope's `progress`
+reports the stage (`unpack` → `extract_frames` → `ocr` with frame counts → `transcribe` → `analyze` →
+`assemble`). Frame extraction and per-frame OCR run in bounded parallel waves (4-wide by default,
+`CRUNCH_PACK_*_CONCURRENCY`), so the OCR leg runs at ~¼ of its old sequential wall-time; transcription
+remains the long pole on CPU. The editorial signals (prosody, segmentation) are computed inline —
 no GPU, no generative LLM.
 
 ## Why crunch
@@ -179,7 +182,7 @@ Tests: `php artisan test`.
 - ✅ Roll pack pipeline (`/pack`) — screen-recording → queryable `crunch.json` with scored moments + segments.
 - Image embeddings (SigLIP-2) behind the same gateway — for visual timeline search over packs.
 - Camera track for packs: on-camera detection + reaction moments.
-- Parallelised per-frame OCR to roughly halve pack processing time.
+- ✅ Parallelised per-frame OCR + frame extraction (bounded waves) with live job `progress`.
 - Automated model + library update tracking with alerts.
 
 ---

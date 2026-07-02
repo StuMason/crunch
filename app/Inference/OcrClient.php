@@ -6,6 +6,8 @@ namespace App\Inference;
 
 use App\Exceptions\VisionUnavailableException;
 use Illuminate\Http\Client\ConnectionException;
+use Illuminate\Http\Client\Pool;
+use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\Http;
 use RuntimeException;
 
@@ -123,5 +125,70 @@ class OcrClient
             'text' => trim((string) $response->json('text')),
             'image_height' => (int) $response->json('image_height', 0),
         ];
+    }
+
+    /**
+     * Line-level OCR many local images concurrently — the pack pipeline's per-frame path.
+     *
+     * Frames go out in waves of $concurrency via {@see Http::pool}, sized to the sidecar's own
+     * parallelism cap (OCR_MAX_PARALLEL) so requests run instead of queueing inside it. Per-frame
+     * best-effort like the rest of the pipeline: a frame whose request fails (unreadable file,
+     * connection error, non-2xx) is simply absent from the result, never fatal.
+     *
+     * @param  array<int|string, string>  $imagePaths  key => absolute image path
+     * @param  (callable(int, int): void)|null  $onProgress  called after each wave with (done, total)
+     * @return array<int|string, array{lines: list<array{text: string, conf: float, box: array<int, int>}>, text: string, image_height: int}> keyed as the input; failed frames omitted
+     */
+    public function linesMany(array $imagePaths, int $concurrency = 4, ?callable $onProgress = null): array
+    {
+        $base = rtrim((string) config('crunch.ocr.url'), '/');
+        $timeout = (int) config('crunch.ocr.timeout', 60);
+
+        $results = [];
+        $total = count($imagePaths);
+        $done = 0;
+
+        foreach (array_chunk($imagePaths, max(1, $concurrency), preserve_keys: true) as $wave) {
+            $responses = Http::pool(function (Pool $pool) use ($wave, $base, $timeout): array {
+                $requests = [];
+                foreach ($wave as $key => $path) {
+                    $contents = @file_get_contents($path);
+                    if ($contents === false) {
+                        continue;
+                    }
+                    $requests[] = $pool->as((string) $key)
+                        ->timeout($timeout)
+                        ->asMultipart()
+                        ->attach('image', $contents, basename($path))
+                        ->post("{$base}/ocr/words");
+                }
+
+                return $requests;
+            });
+
+            foreach (array_keys($wave) as $key) {
+                $response = $responses[$key] ?? null;
+                // A pool entry is a ConnectionException instance when the request never completed.
+                if (! $response instanceof Response || $response->failed()) {
+                    continue;
+                }
+
+                /** @var list<array{text: string, conf: float, box: array<int, int>}> $lines */
+                $lines = (array) $response->json('lines', []);
+
+                $results[$key] = [
+                    'lines' => $lines,
+                    'text' => trim((string) $response->json('text')),
+                    'image_height' => (int) $response->json('image_height', 0),
+                ];
+            }
+
+            $done += count($wave);
+            if ($onProgress !== null) {
+                $onProgress($done, $total);
+            }
+        }
+
+        return $results;
     }
 }

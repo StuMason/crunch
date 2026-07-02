@@ -6,6 +6,7 @@ namespace App\Support\Roll;
 
 use App\DataTransferObjects\Roll\Pack;
 use App\DataTransferObjects\Roll\PackManifest;
+use Illuminate\Process\Pool as ProcessPool;
 use Illuminate\Support\Facades\Process;
 
 /**
@@ -24,8 +25,10 @@ use Illuminate\Support\Facades\Process;
  * leading quotes) — proven side-by-side on a real pack frame. PNG is ~2x the temp-file size but
  * the frames are transient and the accuracy gain is large.
  *
- * One ffmpeg invocation per frame with a fast pre-input seek; a frame that fails to extract is
- * skipped (logged by the caller) rather than sinking the whole job.
+ * One ffmpeg invocation per frame with a fast pre-input seek, run in bounded parallel waves
+ * ({@see Process::pool}) — each is an independent seek + single-frame decode, so N at a time
+ * divides extraction wall-time by ~N without any shared state. A frame that fails to extract
+ * is skipped (logged by the caller) rather than sinking the whole job.
  */
 class FrameExtractor
 {
@@ -41,13 +44,14 @@ class FrameExtractor
      * @param  list<int>  $timesMs
      * @return array<int, string> t_ms => absolute path of the extracted PNG (only successful frames)
      */
-    public function extract(Pack $pack, array $timesMs, string $workDir): array
+    public function extract(Pack $pack, array $timesMs, string $workDir, int $concurrency = 4): array
     {
         return $this->extractFrom(
             $pack->absolutePath($pack->manifest->screenFile),
             $timesMs,
             fn (int $tMs): float => $pack->manifest->screenSecondsAt($tMs),
             $workDir,
+            concurrency: $concurrency,
         );
     }
 
@@ -58,7 +62,7 @@ class FrameExtractor
      * @param  list<int>  $timesMs
      * @return array<int, string> t_ms => absolute path of the extracted PNG (only successful frames)
      */
-    public function extractCamera(Pack $pack, array $timesMs, string $workDir): array
+    public function extractCamera(Pack $pack, array $timesMs, string $workDir, int $concurrency = 4): array
     {
         if ($pack->manifest->cameraFile === null) {
             return [];
@@ -70,6 +74,7 @@ class FrameExtractor
             fn (int $tMs): float => $pack->manifest->cameraSecondsAt($tMs),
             $workDir,
             prefix: 'cam',
+            concurrency: $concurrency,
         );
     }
 
@@ -79,28 +84,38 @@ class FrameExtractor
      *
      * @param  list<int>  $timesMs
      * @param  callable(int): float  $secondsAt  shared-clock t_ms => seconds to seek into this file
+     * @param  int  $concurrency  how many ffmpeg processes run at once (one wave)
      * @return array<int, string> t_ms => absolute PNG path (only successful frames)
      */
-    public function extractFrom(string $mediaPath, array $timesMs, callable $secondsAt, string $workDir, string $prefix = 'frame'): array
+    public function extractFrom(string $mediaPath, array $timesMs, callable $secondsAt, string $workDir, string $prefix = 'frame', int $concurrency = 4): array
     {
         @mkdir($workDir, 0775, true);
 
         $frames = [];
-        foreach ($timesMs as $tMs) {
-            $seconds = $secondsAt($tMs);
-            $out = rtrim($workDir, '/')."/{$prefix}_{$tMs}.png";
+        foreach (array_chunk($timesMs, max(1, $concurrency)) as $wave) {
+            $outs = [];
+            $results = Process::pool(function (ProcessPool $pool) use ($mediaPath, $secondsAt, $workDir, $prefix, $wave, &$outs): void {
+                foreach ($wave as $tMs) {
+                    $out = rtrim($workDir, '/')."/{$prefix}_{$tMs}.png";
+                    $outs[$tMs] = $out;
 
-            $result = Process::run([
-                $this->ffmpeg, '-hide_banner', '-loglevel', 'error', '-y',
-                '-ss', sprintf('%.3f', $seconds),
-                '-i', $mediaPath,
-                '-frames:v', '1',
-                '-vf', "scale='min({$this->maxEdge},iw)':'-2'",
-                $out,
-            ]);
+                    $pool->as((string) $tMs)->command([
+                        $this->ffmpeg, '-hide_banner', '-loglevel', 'error', '-y',
+                        '-ss', sprintf('%.3f', $secondsAt($tMs)),
+                        '-i', $mediaPath,
+                        '-frames:v', '1',
+                        '-vf', "scale='min({$this->maxEdge},iw)':'-2'",
+                        $out,
+                    ]);
+                }
+            })->start()->wait();
 
-            if ($result->successful() && is_file($out) && filesize($out) > 0) {
-                $frames[$tMs] = $out;
+            // Pool keys were registered as (string) $tMs, but PHP array semantics store numeric
+            // strings as int keys — so the int $tMs indexes the results directly.
+            foreach ($outs as $tMs => $out) {
+                if ($results[$tMs]->successful() && is_file($out) && filesize($out) > 0) {
+                    $frames[$tMs] = $out;
+                }
             }
         }
 

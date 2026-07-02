@@ -23,6 +23,7 @@ class JobPresenter
      *     status: string,
      *     model: string|null,
      *     result: array<string, mixed>|null,
+     *     progress: array{stage: string, done?: int, total?: int}|null,
      *     error: string|null,
      *     poll_url: string,
      *     created_at: string|null,
@@ -37,6 +38,9 @@ class JobPresenter
             'status' => $job->status,
             'model' => $job->model,
             'result' => self::result($job),
+            // Where a still-processing job is up to — `{stage, done?, total?}` (e.g. a pack's
+            // OCR wave count). Null before the worker picks it up and once completed.
+            'progress' => $job->progress,
             'error' => $job->error,
             'poll_url' => url("/jobs/{$job->uid}"),
             'created_at' => $job->created_at?->toIso8601String(),
