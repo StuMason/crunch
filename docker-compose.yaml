@@ -34,10 +34,17 @@ services:
       # finish far inside this (detect ~19s, caption ~11s, OCR crop ~7s); only dense
       # full-frame OCR exceeds it — which is exactly what should 504.
       CRUNCH_VISION_TIMEOUT: "30"
-      # APP_KEY, CRUNCH_API_KEY, DB_*, etc. are injected by Coolify's app env.
+      # The SQLite file lives on the `database` volume at /data/db — NOT under /app/database.
+      # Mounting a volume over /app/database shadows the image's database/migrations/, so
+      # newly shipped migrations silently never run ("Nothing to migrate" on every boot —
+      # bit us on the inference_jobs.progress column, 2026-07-02).
+      DB_DATABASE: /data/db/database.sqlite
+      # APP_KEY, CRUNCH_API_KEY, etc. are injected by Coolify's app env.
     volumes:
       - models:/data/models       # ONNX model cache (transformers-php)
-      - database:/app/database     # SQLite
+      # Same named volume as before (data carries over) — only the mount point moved out of
+      # /app so the image's database/migrations/ stays visible to `artisan migrate`.
+      - database:/data/db          # SQLite (see DB_DATABASE above)
       - storage:/app/storage       # framework + app storage (incl. resolved audio temp)
     networks:
       - default                    # talk to `asr` by service name

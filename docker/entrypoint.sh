@@ -14,7 +14,12 @@ if [ "${DB_CONNECTION:-sqlite}" = "sqlite" ]; then
     [ -f "$DB_FILE" ] || touch "$DB_FILE"
 fi
 
-php artisan migrate --force --no-interaction || true
+# Keep booting on a migrate failure (a transient SQLite lock must not crash-loop the app),
+# but shout — a swallowed `|| true` here hid a stale schema for days (the compose volume
+# used to shadow database/migrations/, so migrate said "Nothing to migrate" forever).
+if ! php artisan migrate --force --no-interaction; then
+    echo "!!! MIGRATE FAILED — schema may be stale and jobs may error; investigate before trusting output." >&2
+fi
 php artisan config:clear
 
 # Background queue worker (database queue) for async jobs e.g. transcription.
