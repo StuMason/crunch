@@ -36,3 +36,4 @@ frankenphp-worker.php
 /onnx-community/
 /Xenova/
 storage/app/models/
+__pycache__/

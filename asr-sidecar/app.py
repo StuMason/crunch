@@ -18,7 +18,7 @@ import os
 import tempfile
 import time
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from faster_whisper import WhisperModel
 
 MODEL = os.environ.get("ASR_MODEL", "large-v3-turbo")
@@ -35,7 +35,7 @@ BEAM_SIZE = int(os.environ.get("ASR_BEAM_SIZE", "5"))
 # leaks into output on very short clips.
 INITIAL_PROMPT = os.environ.get("ASR_INITIAL_PROMPT", "Okay, so let's take a look at this.")
 
-app = FastAPI(title="crunch-asr", version="4.0.0")
+app = FastAPI(title="crunch-asr", version="4.1.0")
 _model = None
 
 
@@ -52,7 +52,7 @@ def health() -> dict:
 
 
 @app.post("/transcribe")
-async def transcribe(audio: UploadFile = File(...)) -> dict:
+async def transcribe(audio: UploadFile = File(...), vad: bool = Form(False)) -> dict:
     suffix = os.path.splitext(audio.filename or "")[1] or ".wav"
     with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
         tmp.write(await audio.read())
@@ -65,7 +65,11 @@ async def transcribe(audio: UploadFile = File(...)) -> dict:
             language=os.environ.get("ASR_LANGUAGE", "en"),
             beam_size=BEAM_SIZE,
             word_timestamps=True,
-            vad_filter=False,
+            # vad=true is for mostly-silent tracks (sysaudio): Whisper fed silence
+            # hallucinates loops ("Thank you. Thank you. ..."), and Silero VAD stops the
+            # silence ever reaching the model. The mic track keeps vad off — it's real
+            # speech end-to-end and VAD can clip quiet word edges from a verbatim take.
+            vad_filter=vad,
             initial_prompt=INITIAL_PROMPT or None,  # restores punctuation/casing
         )
         words, text_parts = [], []
