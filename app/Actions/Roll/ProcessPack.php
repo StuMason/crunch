@@ -128,6 +128,9 @@ class ProcessPack
             $pack,
             (string) $pack->manifest->sysAudioFile,
             fn (float $seconds): int => $pack->manifest->sysAudioTMsForSeconds($seconds),
+            // Sysaudio is silent in most takes, and Whisper fed silence hallucinates
+            // ("Thank you." loops) — VAD keeps silence out of the model entirely.
+            vad: true,
         );
     }
 
@@ -255,10 +258,10 @@ class ProcessPack
      * @param  callable(float): int  $tMsForSeconds  seconds into this track => shared-clock t_ms
      * @return list<array{word: string, t_ms: int, t_end_ms: int, confidence: float}>
      */
-    private function trackWords(Pack $pack, string $file, callable $tMsForSeconds): array
+    private function trackWords(Pack $pack, string $file, callable $tMsForSeconds, bool $vad = false): array
     {
         try {
-            $result = $this->asr->transcribe($pack->absolutePath($file));
+            $result = $this->asr->transcribe($pack->absolutePath($file), $vad);
         } catch (Throwable) {
             return [];
         }

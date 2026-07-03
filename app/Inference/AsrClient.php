@@ -20,9 +20,13 @@ class AsrClient
     /**
      * Transcribe a local audio/video file via the sidecar.
      *
+     * `$vad` runs Silero VAD ahead of Whisper so silence never reaches the model — for
+     * mostly-silent tracks (sysaudio), which otherwise hallucinate loops of "Thank you.".
+     * Leave it off for the mic: VAD can clip quiet word edges from a verbatim take.
+     *
      * @return array{task: string, language: string, duration: float, text: string, words: list<array{word: string, start: float, end: float, probability: float}>, model: string, infer_secs: float}
      */
-    public function transcribe(string $audioPath): array
+    public function transcribe(string $audioPath, bool $vad = false): array
     {
         $base = rtrim((string) config('crunch.asr.url'), '/');
 
@@ -35,7 +39,7 @@ class AsrClient
             $response = Http::timeout((int) config('crunch.asr.timeout', 600))
                 ->asMultipart()
                 ->attach('audio', $contents, basename($audioPath))
-                ->post("{$base}/transcribe");
+                ->post("{$base}/transcribe", ['vad' => $vad ? 'true' : 'false']);
         } catch (ConnectionException $e) {
             throw new RuntimeException("ASR sidecar unreachable at {$base}: {$e->getMessage()}", previous: $e);
         }

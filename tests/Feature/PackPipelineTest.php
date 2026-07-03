@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use App\Inference\AsrClient;
 use App\Inference\OcrClient;
 use App\Support\Roll\FrameExtractor;
 use Illuminate\Support\Facades\Http;
@@ -103,4 +104,32 @@ it('extracts frames in parallel waves and returns only the frames ffmpeg produce
     foreach ([0.0, 1.0, 2.0] as $seconds) {
         Process::assertRan(fn ($process): bool => in_array(sprintf('%.3f', $seconds), $process->command, true));
     }
+});
+
+it('requests VAD from the ASR sidecar only when asked (sysaudio yes, mic no)', function () {
+    config(['crunch.asr.url' => 'http://asr:9000']);
+
+    $audio = tempFrameDir().'/track.m4a';
+    file_put_contents($audio, 'm4a-bytes');
+
+    Http::fake([
+        'asr:9000/transcribe' => Http::response([
+            'task' => 'transcribe', 'language' => 'en', 'duration' => 1.0,
+            'text' => '', 'words' => [], 'model' => 'test', 'infer_secs' => 0.1,
+        ]),
+    ]);
+
+    $client = new AsrClient;
+    $client->transcribe($audio);              // mic path default
+    $client->transcribe($audio, vad: true);   // sysaudio path
+
+    $vadValues = [];
+    Http::assertSentCount(2);
+    Http::assertSent(function ($request) use (&$vadValues) {
+        $vadValues[] = collect($request->data())->firstWhere('name', 'vad')['contents'] ?? null;
+
+        return true;
+    });
+
+    expect($vadValues)->toBe(['false', 'true']);
 });
