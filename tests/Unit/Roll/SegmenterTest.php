@@ -81,3 +81,19 @@ it('picks the keyword-densest sentence as the summary', function () {
 
     expect($summary)->toBe('The payment flow uses x402 for the checkout payment.');
 });
+
+it('titles a windowless segment with a purely numeric keyword as a string (PHP int-key coercion)', function () {
+    // "402" spoken repeatedly, no window/app events in the segment: the title falls back to
+    // keywords[0]. PHP silently turns numeric-string array keys into ints, so without a cast
+    // title(): string throws a TypeError — this killed a real pack at the assemble stage.
+    $words = [];
+    foreach ([1000, 1500, 2000, 2500] as $t) {
+        $words[] = ['word' => '402', 't_ms' => $t];
+    }
+
+    $segments = (new Segmenter)->segment(40000, [], $words, []);
+
+    expect($segments)->toHaveCount(1)
+        ->and($segments[0]['title'])->toBe('402')
+        ->and($segments[0]['keywords'])->toBe(['402']);
+});
