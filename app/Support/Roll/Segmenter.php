@@ -169,7 +169,9 @@ class Segmenter
 
         arsort($counts);
 
-        return array_slice(array_keys($counts), 0, self::MAX_KEYWORDS);
+        // PHP coerces numeric-string array keys ("402") to ints — restore the declared
+        // list<string> or a numeric top keyword leaks an int into title(): string.
+        return array_map(strval(...), array_slice(array_keys($counts), 0, self::MAX_KEYWORDS));
     }
 
     /**
