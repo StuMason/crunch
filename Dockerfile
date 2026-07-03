@@ -54,8 +54,10 @@ RUN cp .env.example .env \
     && npm run build \
     && rm -rf node_modules
 
-# Runtime dirs (model cache + sqlite live on persistent volumes in prod).
-RUN mkdir -p /data/models database \
+# Runtime dirs (model cache + sqlite live on persistent volumes in prod). The sqlite volume
+# mounts at /data/db, NOT /app/database — a volume over /app/database would shadow the
+# image's database/migrations/ and new migrations would silently never run.
+RUN mkdir -p /data/models /data/db database \
       storage/framework/cache storage/framework/sessions storage/framework/views storage/logs \
     && chown -R www-data:www-data storage bootstrap/cache /data /app/database
 
