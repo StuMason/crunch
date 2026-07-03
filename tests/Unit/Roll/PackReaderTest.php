@@ -65,6 +65,46 @@ it('treats a take with no sysaudio as not having one', function () {
         ->and($m->sysAudioFile)->toBeNull();
 });
 
+it('analyses the camera proxy when the manifest declares one (full-res stays on the Mac)', function () {
+    $m = PackManifest::fromArray([
+        'version' => '0.0.16', 'fps' => 30, 't0' => 0, 'durationMs' => 1, 'display' => [],
+        'screen' => ['file' => 'screen.mp4', 'firstPTS' => 0],
+        'camera' => [
+            'file' => 'camera.mp4',
+            'proxy' => ['file' => 'camera.proxy.mp4', 'w' => 854, 'h' => 480, 'bitrate' => 600000],
+        ],
+    ]);
+
+    expect($m->hasCamera())->toBeTrue()
+        ->and($m->cameraFile)->toBe('camera.proxy.mp4');
+});
+
+it('falls back to camera.mp4 when the proxy block is missing or empty', function () {
+    $withoutProxy = PackManifest::fromArray([
+        'version' => 'x', 'fps' => 30, 't0' => 0, 'durationMs' => 1, 'display' => [],
+        'screen' => ['file' => 'screen.mp4', 'firstPTS' => 0],
+        'camera' => ['file' => 'camera.mp4'],
+    ]);
+    $emptyProxy = PackManifest::fromArray([
+        'version' => 'x', 'fps' => 30, 't0' => 0, 'durationMs' => 1, 'display' => [],
+        'screen' => ['file' => 'screen.mp4', 'firstPTS' => 0],
+        'camera' => ['file' => 'camera.mp4', 'proxy' => ['file' => '']],
+    ]);
+
+    expect($withoutProxy->cameraFile)->toBe('camera.mp4')
+        ->and($emptyProxy->cameraFile)->toBe('camera.mp4');
+});
+
+it('collapses a hostile proxy path to its basename', function () {
+    $m = PackManifest::fromArray([
+        'version' => 'x', 'fps' => 30, 't0' => 0, 'durationMs' => 1, 'display' => [],
+        'screen' => ['file' => 'screen.mp4', 'firstPTS' => 0],
+        'camera' => ['file' => 'camera.mp4', 'proxy' => ['file' => '../../etc/passwd']],
+    ]);
+
+    expect($m->cameraFile)->toBe('passwd');
+});
+
 it('discovers roll pre-rendered keyframes keyed by screen-clock t_ms, ignoring non-numeric names', function () {
     $pack = readFixturePack();
 

@@ -60,7 +60,7 @@ final readonly class PackManifest
             durationMs: (float) ($data['durationMs'] ?? 0),
             display: self::normalizeDisplay($data['display'] ?? []),
             screenFile: basename((string) ($screen['file'] ?? 'screen.mp4')),
-            cameraFile: $camera === null ? null : basename((string) ($camera['file'] ?? 'camera.mp4')),
+            cameraFile: $camera === null ? null : self::cameraSource($camera),
             micFile: $mic === null ? null : basename((string) ($mic['file'] ?? 'mic.m4a')),
             cameraSyncOffsetMs: (float) ($data['cameraSyncOffsetMs'] ?? 0),
             micSyncOffsetMs: (float) ($data['micSyncOffsetMs'] ?? 0),
@@ -68,6 +68,23 @@ final readonly class PackManifest
             sysAudioFile: $sysAudio === null ? null : basename((string) ($sysAudio['file'] ?? 'sysaudio.m4a')),
             sysAudioSyncOffsetMs: (float) ($data['sysAudioSyncOffsetMs'] ?? 0),
         );
+    }
+
+    /**
+     * The camera file to analyse. Roll packs may ship a small proxy encode
+     * (`camera.proxy.mp4`) INSTEAD of the full-res `camera.mp4`, which stays on the
+     * recording Mac for rendering — when the manifest declares a proxy, analyse that.
+     * The proxy is transcoded from the same capture, so `cameraSyncOffsetMs` and the
+     * shared-clock seek math apply unchanged.
+     *
+     * @param  array<string, mixed>  $camera
+     */
+    private static function cameraSource(array $camera): string
+    {
+        $proxy = is_array($camera['proxy'] ?? null) ? $camera['proxy'] : null;
+        $file = $proxy['file'] ?? null;
+
+        return basename(is_string($file) && $file !== '' ? $file : (string) ($camera['file'] ?? 'camera.mp4'));
     }
 
     public function hasCamera(): bool
