@@ -14,6 +14,7 @@ use App\Support\Roll\CrunchAssembler;
 use App\Support\Roll\FrameExtractor;
 use App\Support\Roll\FrameSampler;
 use App\Support\Roll\PackReader;
+use Illuminate\Support\Facades\Log;
 use Throwable;
 
 /**
@@ -29,6 +30,15 @@ use Throwable;
  */
 class ProcessPack
 {
+    /**
+     * Degraded-output notes surfaced in the result as `warnings` — a completed job with a
+     * missing track must SAY so, or the absence reads as "nothing was said" (a real pack
+     * shipped an empty transcript for 20 minutes of speech before anyone noticed).
+     *
+     * @var list<string>
+     */
+    private array $warnings = [];
+
     public function __construct(
         private readonly PackReader $reader,
         private readonly FrameSampler $sampler,
@@ -49,6 +59,7 @@ class ProcessPack
     public function handle(string $packDir, string $packId, ?callable $onProgress = null): array
     {
         $report = $onProgress ?? fn (array $progress) => null;
+        $this->warnings = [];   // the action can be reused (Octane) — never carry a prior pack's warnings
 
         $pack = $this->reader->read($packDir);
         $workDir = rtrim($packDir, '/').'/_frames';
@@ -65,13 +76,18 @@ class ProcessPack
 
         $report(['stage' => 'assemble']);
 
-        return $this->assembler->assemble(
+        $out = $this->assembler->assemble(
             $pack, $packId, $ocrLinesByFrame, $words,
             frameHeight: $frameHeight,
             prosodyMoments: $prosodyMoments,
             sysWords: $sysWords,
             cameraSamples: $cameraSamples,
         );
+        if ($this->warnings !== []) {
+            $out['warnings'] = $this->warnings;
+        }
+
+        return $out;
     }
 
     /**
@@ -117,6 +133,8 @@ class ProcessPack
      * from the mic (the presenter's voice). Best-effort — missing/unreadable sysaudio yields nothing.
      *
      * @return list<array{word: string, t_ms: int, t_end_ms: int, confidence: float}>
+     *
+     * @phpstan-impure calls the ASR sidecar and records failures in $this->warnings
      */
     private function transcribeSysAudio(Pack $pack): array
     {
@@ -235,6 +253,8 @@ class ProcessPack
      * after t0, so they must be shifted to line up with the input events.
      *
      * @return list<array{word: string, t_ms: int, t_end_ms: int, confidence: float}>
+     *
+     * @phpstan-impure calls the ASR sidecar and records failures in $this->warnings
      */
     private function transcribe(Pack $pack): array
     {
@@ -252,17 +272,32 @@ class ProcessPack
     /**
      * Transcribe one audio track and map each word onto the shared clock with the track's own
      * seconds→t_ms function. Best-effort — an unreadable track or a sidecar failure yields no
-     * words rather than sinking the job. Shared by the mic and sysaudio paths, whose only
-     * difference is the sync offset baked into the mapping.
+     * words rather than sinking the job, but the failure is logged and surfaced in the result's
+     * `warnings` (a silently-empty transcript is indistinguishable from a silent take). Shared
+     * by the mic and sysaudio paths, whose only difference is the sync offset baked into the
+     * mapping.
+     *
+     * The HTTP timeout scales with the take: 2× realtime, floored at the configured value.
+     * Whisper normally runs well under 0.5× realtime here, but the box is shared — a loaded
+     * afternoon once pushed a 10-minute mic past the fixed 600s cap and cost the whole
+     * transcript.
      *
      * @param  callable(float): int  $tMsForSeconds  seconds into this track => shared-clock t_ms
      * @return list<array{word: string, t_ms: int, t_end_ms: int, confidence: float}>
      */
     private function trackWords(Pack $pack, string $file, callable $tMsForSeconds, bool $vad = false): array
     {
+        $timeout = max(
+            (int) config('crunch.asr.timeout', 600),
+            (int) ceil($pack->manifest->durationMs / 1000) * 2,
+        );
+
         try {
-            $result = $this->asr->transcribe($pack->absolutePath($file), $vad);
-        } catch (Throwable) {
+            $result = $this->asr->transcribe($pack->absolutePath($file), $vad, $timeout);
+        } catch (Throwable $e) {
+            $this->warnings[] = "{$file}: transcription failed — {$e->getMessage()}";
+            Log::warning("pack: {$file} transcription failed", ['exception' => $e->getMessage()]);
+
             return [];
         }
 
