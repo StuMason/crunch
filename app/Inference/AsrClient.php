@@ -24,9 +24,13 @@ class AsrClient
      * mostly-silent tracks (sysaudio), which otherwise hallucinate loops of "Thank you.".
      * Leave it off for the mic: VAD can clip quiet word edges from a verbatim take.
      *
+     * `$timeoutSecs` overrides the configured HTTP timeout — pack processing scales it to
+     * the take's duration, because a fixed cap silently truncates long takes when the
+     * shared box is under load (Whisper's realtime factor is not a constant).
+     *
      * @return array{task: string, language: string, duration: float, text: string, words: list<array{word: string, start: float, end: float, probability: float}>, model: string, infer_secs: float}
      */
-    public function transcribe(string $audioPath, bool $vad = false): array
+    public function transcribe(string $audioPath, bool $vad = false, ?int $timeoutSecs = null): array
     {
         $base = rtrim((string) config('crunch.asr.url'), '/');
 
@@ -36,7 +40,7 @@ class AsrClient
         }
 
         try {
-            $response = Http::timeout((int) config('crunch.asr.timeout', 600))
+            $response = Http::timeout($timeoutSecs ?? (int) config('crunch.asr.timeout', 600))
                 ->asMultipart()
                 ->attach('audio', $contents, basename($audioPath))
                 ->post("{$base}/transcribe", ['vad' => $vad ? 'true' : 'false']);

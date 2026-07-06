@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use App\Actions\Roll\ProcessPack;
 use App\Inference\AsrClient;
 use App\Inference\OcrClient;
 use App\Support\Roll\FrameExtractor;
@@ -132,4 +133,22 @@ it('requests VAD from the ASR sidecar only when asked (sysaudio yes, mic no)', f
     });
 
     expect($vadValues)->toBe(['false', 'true']);
+});
+
+it('surfaces a failed transcription as a result warning instead of a silently empty transcript', function () {
+    config(['crunch.asr.url' => 'http://asr:9000', 'crunch.ocr.url' => 'http://ocr:9000']);
+
+    Process::fake();                                        // no real ffmpeg: no frames, no prosody
+    Http::fake([
+        'asr:9000/*' => Http::response(['detail' => 'whisper timed out'], 500),
+        'ocr:9000/*' => Http::response(['lines' => []]),
+    ]);
+
+    $result = app(ProcessPack::class)
+        ->handle(dirname(__DIR__).'/Fixtures/roll-pack', 'rec-test');
+
+    expect($result['transcript']['words'])->toBe([])
+        ->and($result['warnings'])->toBeArray()
+        ->and(implode(' ', $result['warnings']))->toContain('mic.m4a')
+        ->and(implode(' ', $result['warnings']))->toContain('transcription failed');
 });
