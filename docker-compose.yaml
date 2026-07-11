@@ -49,6 +49,14 @@ services:
     networks:
       - default                    # talk to `asr` by service name
       - coolify                    # reachable by the Traefik proxy
+    # Without a healthcheck Coolify reports the whole stack running:unknown —
+    # it can't see failures. curl is in the app image; /up is Laravel's health route.
+    healthcheck:
+      test: ['CMD', 'curl', '-f', 'http://localhost:8000/up']
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
     labels:
       - traefik.enable=true
       - traefik.docker.network=coolify
