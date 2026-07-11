@@ -95,6 +95,12 @@ services:
       - asr_models:/models         # HF cache — persists the model download
     networks:
       - default                    # internal only; never exposed to Traefik
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:9000/health', timeout=5).status==200 else 1)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 180s
 
   vision:
     build:
@@ -111,6 +117,12 @@ services:
       - vision_models:/models      # HF cache — persists the model download
     networks:
       - default                    # internal only; never exposed to Traefik
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:9000/health', timeout=5).status==200 else 1)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 180s
 
   ocr:
     build:
@@ -132,6 +144,12 @@ services:
           cpus: "4"                # same reasoning as asr: shared box, don't starve the web apps
     networks:
       - default                    # internal only; never exposed to Traefik
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:9000/health', timeout=5).status==200 else 1)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
 
 networks:
   coolify:
