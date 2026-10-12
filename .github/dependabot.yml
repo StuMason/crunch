@@ -7,6 +7,46 @@ updates:
     cooldown:
       default-days: 5
     groups:
+      security:
+        applies-to: security-updates
+        patterns:
+          - "*"
       github-actions:
+        patterns:
+          - "*"
+
+  - package-ecosystem: composer
+    directory: /
+    schedule:
+      interval: weekly
+    # security updates only; version updates stay off
+    open-pull-requests-limit: 0
+    groups:
+      security:
+        applies-to: security-updates
+        patterns:
+          - "*"
+
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    # security updates only; version updates stay off
+    open-pull-requests-limit: 0
+    groups:
+      security:
+        applies-to: security-updates
+        patterns:
+          - "*"
+
+  - package-ecosystem: pip
+    directory: /vision-sidecar
+    schedule:
+      interval: weekly
+    # security updates only; version updates stay off
+    open-pull-requests-limit: 0
+    groups:
+      security:
+        applies-to: security-updates
         patterns:
           - "*"
